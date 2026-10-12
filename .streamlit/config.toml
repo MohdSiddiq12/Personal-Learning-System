@@ -5,3 +5,10 @@ maxUploadSize = 50
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+primaryColor = "#117c75"
+backgroundColor = "#f4f7f5"
+secondaryBackgroundColor = "#e9f1ed"
+textColor = "#19312f"
+font = "sans serif"

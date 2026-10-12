@@ -20,7 +20,7 @@ def test_app_uploads_valid_pdf_and_browses_first_page(text_pdf: Path) -> None:
 
     assert not app.exception
     assert app.title[0].value == "LearnBook"
-    assert any("Page count: 3" == item.value for item in app.text)
+    assert any(item.label == "Pages" and item.value == "3" for item in app.metric)
     assert "Page one unique text" in app.text_area[0].value
 
 
@@ -32,6 +32,16 @@ def test_app_reports_a_pdf_uploaded_again_in_the_same_session(text_pdf: Path) ->
     app = upload_pdf(app, "sample.pdf", content)
 
     assert any("already been uploaded" in item.value for item in app.info)
+
+
+def test_app_search_result_jumps_to_matching_page(text_pdf: Path) -> None:
+    app = upload_pdf(make_app(), "sample.pdf", text_pdf.read_bytes())
+    app.text_input(key="search_query").set_value("Page two unique text").run()
+
+    app.button(key="open-search-result").click().run()
+
+    assert app.number_input(key="page_number").value == 2
+    assert "Page two unique text" in app.text_area[0].value
 
 
 def test_app_shows_plain_error_for_corrupt_pdf() -> None:

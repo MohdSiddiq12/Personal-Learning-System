@@ -27,22 +27,22 @@ def test_local_pdf_upload_browse_search_and_errors(tmp_path: Path) -> None:
         uploader = page.locator('input[type="file"]')
         expect(uploader).to_be_attached()
         uploader.set_input_files(str(sample_dir / "sample_book.pdf"))
-        expect(page.get_by_text("Page count: 12", exact=True)).to_be_visible()
+        expect(page.locator('[data-testid="stMetric"]').first).to_contain_text("12")
         page_text = page.get_by_role("textbox", name="Page text")
         expect(page_text).to_have_value(re.compile("learnbook-page-01"))
         page.screenshot(path=str(screenshots / "success.png"), full_page=True)
 
-        page.get_by_role("button", name="Next page").click()
+        page.get_by_role("button", name="Next →").click()
         expect(page_text).to_have_value(re.compile("learnbook-page-02"))
 
-        search_box = page.get_by_role("textbox", name="Search text")
+        search_box = page.get_by_role("textbox", name="Search this book")
         search_box.fill("learnbook-page-05")
         search_box.press("Enter")
-        page.get_by_role("button", name="Go to selected result").click()
+        page.get_by_role("button", name="Open result").click()
         expect(page_text).to_have_value(re.compile("learnbook-page-05"))
 
         with page.expect_download() as download_info:
-            page.get_by_role("button", name="Download extracted text").click()
+            page.get_by_role("button", name="Download page-marked text").click()
         download = download_info.value
         export_path = tmp_path / "learnbook-extracted.txt"
         download.save_as(str(export_path))
