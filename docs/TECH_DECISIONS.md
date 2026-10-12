@@ -8,6 +8,6 @@
 | Pydantic | Implemented | Validates typed settings and supports environment-backed configuration. | Adds runtime dependencies and validation behavior to learn. | dataclasses with manual parsing; environ-config. |
 | SQLite-first | Planned | A file-backed database keeps an initial personal deployment simple and portable. | Single-writer constraints and limited multi-user scaling. | PostgreSQL; a document store. |
 | PyMuPDF | Implemented | Offers practical PDF text and page extraction capabilities while preserving page structure. | AGPL licensing has distribution and network-use implications that must be reviewed before adoption. | pypdf; pdfminer.six. |
-| Streamlit | Planned | Can provide a small Python-first interface for a personal tool. | Less control over complex interaction and presentation than a dedicated web stack. | FastAPI with a separate frontend; Gradio. |
+| Streamlit | Implemented | Provides a local Python-first interface for uploading, browsing, searching, and exporting extracted PDF text. | Limited highlight/notes UX; its rerun-on-interaction model needs session-state care; upload size is capped by server config. | FastAPI with a separate frontend; Gradio. |
 
 Review PyMuPDF's AGPL terms against the intended distribution model before distributing the application.

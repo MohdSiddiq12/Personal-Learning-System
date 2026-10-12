@@ -1,6 +1,6 @@
 # LearnBook
 
-LearnBook is a foundation for a personal PDF learning app that will turn book PDFs into source-cited learning guides. The current milestone establishes project configuration and tests; PDF processing, AI integration, and a user interface are not implemented yet.
+LearnBook is a local-first PDF learning demo that extracts text page by page so readers can browse and search their books. Uploaded files are processed in memory on this machine; the demo has no database, AI integration, or OCR.
 
 ## Windows setup
 
@@ -13,7 +13,7 @@ uv sync
 Copy-Item .env.example .env
 ```
 
-Edit `.env` only when you need to override the documented local settings. No API keys are required for the current milestone.
+Edit `.env` only when you need to override local settings. No API keys are required.
 
 ## Checks
 
@@ -23,10 +23,25 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-## PDF ingestion demo
+The default pytest run excludes browser tests and stays local and fast. Browser tests use Playwright. Installing its Chromium browser and headless shell downloads approximately 250-300 MB:
 
 ```powershell
-uv run python -m learnbook.ingestion .\path\to\book.pdf
+uv run playwright install chromium
+uv run pytest -m e2e
 ```
 
-The command reports document metadata, page count, OCR suspicion, and a short first-page preview. It does not perform OCR or upload the PDF anywhere.
+If Chrome is already installed, the e2e test can use it without downloading a browser:
+
+```powershell
+$env:LEARNBOOK_CHROMIUM_EXECUTABLE = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+uv run pytest -m e2e
+```
+
+## Generate samples and run the app
+
+```powershell
+uv run python scripts/make_sample_pdf.py
+uv run streamlit run src/learnbook/app/main.py
+```
+
+The sample PDFs are written under the ignored `data/` directory. Streamlit serves the app at `http://localhost:8501` by default.

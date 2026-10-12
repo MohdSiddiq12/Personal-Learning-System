@@ -1,0 +1,7 @@
+[server]
+address = "localhost"
+headless = false
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
