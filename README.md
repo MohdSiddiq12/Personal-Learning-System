@@ -22,3 +22,11 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 ```
+
+## PDF ingestion demo
+
+```powershell
+uv run python -m learnbook.ingestion .\path\to\book.pdf
+```
+
+The command reports document metadata, page count, OCR suspicion, and a short first-page preview. It does not perform OCR or upload the PDF anywhere.
