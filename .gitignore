@@ -1,3 +1,29 @@
 *Learn
 /Learn
 Learn/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Local configuration and data
+.env
+.env.*
+!.env.example
+data/
+*.pdf
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor settings
+.vscode/*
+!.vscode/settings.json
