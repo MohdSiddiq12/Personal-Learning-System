@@ -11,7 +11,7 @@ Inspiration: Shortform's learning experience (concise guides, frameworks, practi
 ## 2. Objectives
 
 1. **Core value:** from any uploaded PDF, produce a ranked, page-cited book map that covers the author's main ideas.
-2. **Customization:** let the user choose minutes per topic, daily minutes, and goal (understand, apply, review). Build a path that fits.
+2. **Customization:** let the user choose daily study time and goal (understand, apply, review). Build a path that fits.
 3. **Learning loop:** short lessons, recall questions, one action to try per topic, topic status (new, learning, understood, review).
 4. **Persistence:** save per-user books, maps, paths, progress, notes, highlights.
 5. **Visual progress:** a tree or heatmap of the book map colored by status, plus a "core ideas mastered" percentage. Mastered means a passed recall check, not "opened the lesson".
@@ -50,7 +50,7 @@ Inspiration: Shortform's learning experience (concise guides, frameworks, practi
   - Private Storage bucket for PDFs, owner-scoped Postgres rows for pages and guides, signed URLs for retrieval, delete one book or the whole library.
   - Process-isolated PDF parsing with a 30-second timeout, 50 MB upload cap, 500 pages per hosted book, 400,000 extracted characters cap, concurrent parser limits, per-user caps, per-user and global AI-job quotas.
   - Server-side Groq generation: the owner key stays on the backend; explicit user consent gates generation. Book-map requests run as resumable jobs, save completed chunks and real usage, and have process pacing plus atomic database budget/job admission.
-- **Last reported checks:** 42 Python tests passed (1 browser test deselected), ruff and format pass, `uv sync --locked` passes, `npm run lint` and `npm run build` pass, `npm audit` reports 0 vulnerabilities.
+- **Task 8 local checks:** See the Task 8 completion report in `docs/PROGRESS.md`. These are offline checks; provider behavior and live Supabase operations remain unverified.
 
 ### Not verified (important)
 - Real Supabase auth, storage, and RLS (no cross-user isolation test with two real accounts yet).
@@ -61,20 +61,15 @@ Inspiration: Shortform's learning experience (concise guides, frameworks, practi
 ### Gap table (from the latest audit)
 | Capability | Status |
 |---|---|
-| Hierarchical book map (topics, subtopics, frameworks with ranking and study time) | Partial: output is a flat overview, ideas, frameworks, practice list |
-| Whole-book coverage | Partial: chunk-and-merge exists, real coverage unverified |
-| Page reference validation | Partial: range check only, no direct test for the rejection branch, no semantic support check |
-| Preferences screen | Missing |
-| Learning-path builder | Missing |
-| Lesson reader | Missing (UI only reads extracted source pages) |
-| Recall questions | Partial: generated, no answer capture, grading, or mastery gate |
-| Saved passages / highlights | Missing |
-| Notes | Missing |
-| Topic status | Missing |
-| Progress visual | Missing (static workflow strip only) |
+| Hierarchical book map | Implemented with deterministic digest and candidate merge; real-book coverage remains unverified |
+| Page reference support | Range-checked; lexical support marked weak or ok; semantic support remains unverified |
+| Server-side model jobs | Groq provider, consent, retry, usage accounting, and process pacing implemented; live provider behavior unverified |
+| Preferences and learning path | Daily minutes, condensed topics, optional topics, completion preservation implemented |
+| Lesson reader | Cached 5/10 minute lessons, cited source pages, recall self-check, notes, passage save, and completion implemented |
+| Shelf and progress | Path/core progress, learned list, and topic status grid implemented; all measures remain self-reported |
 | Delete data | Partial: routes exist and pass fake-Supabase tests, real deletion unverified, account deletion not built |
 
-Housekeeping: `docs/PROGRESS.md` currently contains two near-duplicate audit tables and an empty "Audit Smoke-Test Readiness" heading. Merge and clean them up.
+Task 8 replaced per-user model credentials with server-side Groq. The frontend has no provider key field or browser storage for secrets. See `docs/PROGRESS.md` and `docs/DEPLOYMENT.md` for current checks and setup.
 
 ## 6. Architecture
 
@@ -132,7 +127,7 @@ D:\Learn-Books
 
 - **Auth:** every route requires a verified Supabase access token. Scope every query by the authenticated user id. Return 404 (not 403) for other users' resources where sensible.
 - **Service-role key:** backend only. It must never reach the browser bundle or logs. Prefer user-scoped access where possible and rely on RLS as defense in depth.
-- **Limits:** upload 50 MB, 500 pages, 400,000 characters, 30-second parse timeout, concurrent parser cap, per-user book and storage caps, per-user and global AI job quotas. Quotas are database-backed. A known gap: quota accounting is not fully transactional.
+- **Limits:** upload 50 MB, 500 hosted pages, 3,000,000 extracted characters, 30-second parse timeout, two parser processes per instance, 20 books and 100 MB retained PDFs per user, and 10 uploads per day. Groq defaults are 5,000 estimated tokens per request, 6,000 tokens per minute, 150,000 tokens per day globally, 2 map jobs per user per day, and 12 lesson jobs per user per day. Job admission and the shared daily token budget use a database transaction; storage accounting and process-local pacing still need hardening.
 - **Prompt-injection posture:** system instructions must tell the model to ignore instructions inside book text. Output is parsed against a Pydantic schema. Do not execute or render anything the model returns as code or HTML.
 - **Groq key handling:** `GROQ_API_KEY` exists only in backend environment settings. It is never sent to browser code, stored in rows, logged, echoed, or included in error messages.
 - **Errors:** friendly user messages, no tracebacks to clients.
@@ -144,8 +139,8 @@ D:\Learn-Books
   - `NEXT_PUBLIC_API_URL`: backend URL. `http://localhost:8000` locally, the public HTTPS backend URL in production. Baked in at build time.
   - `NEXT_PUBLIC_TAKEDOWN_EMAIL`: a real monitored inbox for copyright complaints, shown on the terms page. Currently a placeholder.
   - Supabase public URL and public (anon or publishable) key.
-- **Today:** sign-in and sign-up, private library, upload, page reader with search and export, guide display, delete controls, terms page.
-- **To build:** preferences screen, path view, lesson reader, recall questions with answer capture, notes and highlights, topic status controls, progress visual.
+- **Today:** sign-in and sign-up, private library, upload, book map and outline summary, daily path, lesson reader, recall self-check, notes, saved passages, topic status, progress visual, delete controls, terms page.
+- **Remaining:** recall grading and mastery gating, account deletion, production hardening, live Supabase verification, and deployment.
 - **Security:** never inject document or model text as HTML. Keep the service-role key and any secret out of `web/`.
 - **UX goals:** upload first, short lessons, expandable explanations, clear distinction between essential and optional topics, responsive on mobile, accessible.
 - **Highlights:** start with "save this passage" using page and text. True select-to-highlight is a later enhancement.
@@ -193,9 +188,9 @@ Port 8000 is the API and returns `{"detail":"Not Found"}` at `/`. That is normal
 
 ## 14. Roadmap (build in this order)
 
-**Task 6, backend: book map, path, notes, status** (first task, spec below).
-**Task 7, frontend:** preferences screen, path view, lesson reader, recall questions with answer capture, notes and highlights, topic status, progress visual. Add component or browser tests for the main flow.
-**Task 8, product pivot:** use server-side Groq, resumable jobs, digest-based maps, time-based paths and the new shelf flow. See the current Task 8 handoff for staged acceptance criteria.
+**Task 6, backend: book map, path, notes, status** (completed locally).
+**Task 7, frontend:** preferences, path, lesson reader, recall self-check, notes and saved passages, status and progress (completed locally).
+**Task 8, product pivot:** server-side Groq, resumable jobs, digest-based maps, time-based paths and shelf flow (completed locally; see `docs/PROGRESS.md`).
 **Task 9, hardening and launch prep:** transactional quotas, account deletion, rate limiting, `docker build` verified, terms page finalized, takedown email set, AGPL decision applied, CORS and auth redirects configured, two-account RLS test against a real Supabase project.
 **Task 10, deploy:** Render and Vercel, smoke test the public URLs, document rollback.
 
@@ -206,7 +201,7 @@ Backend and database only. Do not touch the frontend. Do not use AWS.
 1. **Step 0:** read the repo and docs, commit any uncommitted work first, clean up the duplicated audit tables in `docs/PROGRESS.md`.
 2. **Migration (new file):** tables listed in section 11. `topics` fields: id, book_id, user_id, parent_id (nullable), kind (topic, subtopic, framework, principle, method), title, summary, importance 1 to 5, est_minutes, position, page_refs int[]. `topic_progress`: user_id, topic_id, status (new, learning, understood, review), updated_at. `learning_preferences`: user_id, book_id, minutes_per_topic, daily_minutes, goal (understand, apply, review). `learning_paths` and `path_items`: path_id, topic_id, position, day_number, is_optional. `highlights`: id, user_id, book_id, topic_id nullable, page, text, note, created_at. `notes`: id, user_id, book_id, topic_id nullable, body, created_at, updated_at.
 3. **Book map generation (extend `api/summary.py`, keep the consent gate):** pass 1 per chunk extracts candidate concepts with kind and page numbers. Pass 2 merges, dedupes, builds the parent and child hierarchy, ranks importance, estimates minutes. Validate with Pydantic. Drop or reject items with page_refs outside 1..page_count. Instruct the model to ignore instructions inside the book. Never log keys or book text.
-4. **Path builder:** a pure function in `src/learnbook/core/`, no AI, no network. Input topics and preferences, output ordered items grouped by day. Parents before children, higher importance first, each item fits minutes_per_topic, each day fits daily_minutes, leftovers marked optional. Deterministic.
+4. **Path builder:** a pure function in `src/learnbook/core/`, no AI, no network. It packs topics into days within `daily_minutes`, condenses topics longer than one day's budget, and places low-importance topics in the optional section. Completed path items are copied with their saved day and completion timestamp when the path is rebuilt.
 5. **Routes (authenticated, user-scoped):** GET book map, POST build path, GET path, PUT topic status, PUT preferences, POST/GET/DELETE highlights, POST/GET/PUT/DELETE notes. Validate inputs, cap text lengths.
 6. **Tests (offline, fake provider, fake Supabase):** every new table has an RLS policy (parse the SQL), hierarchy validation, direct test for out-of-range page rejection, injected instructions in a chunk do not change behavior, path builder ordering and budget and optional leftovers and empty input and an over-long topic, cross-user access denied on every new route, deleting a book removes related rows.
 7. **Acceptance:** `uv run pytest`, ruff check, ruff format check, `uv sync --locked` all pass. No new dependencies. No secrets in git. Do not push.

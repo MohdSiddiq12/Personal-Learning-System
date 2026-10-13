@@ -16,7 +16,7 @@ Shortform-inspired use cases are adapted as product patterns, not copied content
 ## Supabase setup
 
 1. Create a Supabase project and configure Auth email/password plus email confirmation. Before a public launch, configure a real SMTP sender, site URL, and redirect URLs for localhost and the production frontend.
-2. Apply the migrations in order in the Supabase SQL editor or with the Supabase CLI: [public books](../supabase/migrations/202610130001_public_books.sql), [learning path](../supabase/migrations/202610140001_learning_path.sql), [lessons](../supabase/migrations/202610150001_lessons.sql), and [generation jobs](../supabase/migrations/202610160001_generation_jobs.sql). They create owner-scoped books, maps, learning paths, lessons, resumable generation jobs, chunk results, and token usage records, plus the private PDF bucket and RLS policies.
+2. Apply the migrations in order in the Supabase SQL editor or with the Supabase CLI: [public books](../supabase/migrations/202610130001_public_books.sql), [learning path](../supabase/migrations/202610140001_learning_path.sql), [lessons](../supabase/migrations/202610150001_lessons.sql), [generation jobs](../supabase/migrations/202610160001_generation_jobs.sql), and [digest and path progress](../supabase/migrations/202610160002_digest_path_progress.sql). They create owner-scoped books, maps, learning paths, lessons, resumable generation jobs, chunk results, token usage records, digest/outline metadata, and RLS policies.
 3. Set API secrets on the backend only: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `GROQ_MODEL`. The service-role and Groq keys must never be placed in `web/.env.local`, a `NEXT_PUBLIC_*` variable, source control, or browser code.
 4. Set frontend values in `web/.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_URL`, and `NEXT_PUBLIC_TAKEDOWN_EMAIL`. The publishable/anon key is designed for browser use; RLS is the access boundary.
 5. Set backend `FRONTEND_ORIGINS` to the exact comma-separated frontend origins. Keep localhost in development and the deployed domain in production.
@@ -54,7 +54,7 @@ The UI runs at `http://localhost:3000`; API health is at `http://127.0.0.1:8000/
 ## Deploy
 
 - **Frontend:** import the repository in Vercel and set the project root to `web`. Add the four `NEXT_PUBLIC_*` values from `web/.env.example`.
-- **API:** deploy the root [`Dockerfile`](../Dockerfile) on Render or another Docker host. Set every server variable from `.env.example` in the host's secret/environment settings, including `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_DAILY_TOKEN_BUDGET`, `GROQ_TPM_LIMIT`, `MAX_BOOKS_PER_USER_PER_DAY`, and `MAX_LESSONS_PER_USER_PER_DAY`. Set `ENVIRONMENT=production` and `FRONTEND_ORIGINS` to the deployed Vercel origin. Production startup requires both Groq key and model. `render.yaml` is a starter blueprint; enter secrets in the host dashboard.
+- **API:** deploy the root [`Dockerfile`](../Dockerfile) on Render or another Docker host. Set server environment names from `.env.example`, including `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_TIMEOUT_SECONDS`, `GROQ_MAX_RETRIES`, `GROQ_MAX_REQUEST_TOKENS`, `GROQ_TPM_LIMIT`, `GROQ_DAILY_TOKEN_BUDGET`, `GROQ_MAX_TOTAL_WAIT_SECONDS`, `GROQ_JSON_MODE_SUPPORTED`, `MAX_BOOKS_PER_USER_PER_DAY`, `MAX_LESSONS_PER_USER_PER_DAY`, and the upload/storage limits. Set `ENVIRONMENT` to production and `FRONTEND_ORIGINS` to the deployed Vercel origin. Production startup requires the Groq key and model. `render.yaml` is a starter blueprint; enter secrets in the host dashboard.
 - **Database and files:** apply the migration to the production Supabase project, configure Auth redirect URLs, and confirm the bucket is private and RLS policies are enabled.
 - **Before public traffic:** set the real takedown contact, review the terms/privacy copy with counsel, select a project license, confirm PyMuPDF's AGPL obligations, and test account isolation/deletion using at least two real accounts.
 
@@ -66,8 +66,8 @@ No Supabase project or real credentials were available here, so real sign-in, st
 
 ## Official references
 
-- [Shortform product site](https://www.shortform.com/) — source for product-category inspiration only; no summaries or copy are reused.
-- [Supabase pricing](https://supabase.com/pricing) — plan/storage quotas and inactivity behavior; recheck before launch.
-- [Supabase Storage access control](https://supabase.com/docs/guides/storage/security/access-control) — private bucket RLS policies.
-- [Supabase standard uploads](https://supabase.com/docs/guides/storage/uploads/standard-uploads) — upload sizes and resumable upload guidance.
-- [Next.js deployment](https://nextjs.org/docs/app/getting-started/deploying), [FastAPI deployment](https://fastapi.tiangolo.com/deployment/), and [Streamlit Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud) — hosting references.
+- [Shortform product site](https://www.shortform.com/): product-category inspiration only; no summaries or copy are reused.
+- [Supabase pricing](https://supabase.com/pricing): plan/storage quotas and inactivity behavior; recheck before launch.
+- [Supabase Storage access control](https://supabase.com/docs/guides/storage/security/access-control): private bucket RLS policies.
+- [Supabase standard uploads](https://supabase.com/docs/guides/storage/uploads/standard-uploads): upload sizes and resumable upload guidance.
+- [Next.js deployment](https://nextjs.org/docs/app/getting-started/deploying), [FastAPI deployment](https://fastapi.tiangolo.com/deployment/), and [Streamlit Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud): hosting references.

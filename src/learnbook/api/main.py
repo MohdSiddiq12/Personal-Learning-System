@@ -16,6 +16,7 @@ from fastapi import (
     File,
     Header,
     HTTPException,
+    Query,
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -1023,7 +1024,7 @@ def create_app() -> FastAPI:
         user_id: str = Depends(current_user_id),
         backend: SupabaseRest = Depends(get_backend),
     ) -> dict[str, object]:
-        await find_book(backend, user_id, book_id)
+        book = await find_book(backend, user_id, book_id)
         topics = (
             await backend.request(
                 "GET",
@@ -1058,7 +1059,11 @@ def create_app() -> FastAPI:
                 by_id[parent_id]["children"].append(topic)
             else:
                 roots.append(topic)
-        return {"book_id": str(book_id), "topics": roots}
+        return {
+            "book_id": str(book_id),
+            "topics": roots,
+            "summary": book.get("summary_json"),
+        }
 
     @app.put("/api/books/{book_id}/preferences")
     async def put_preferences(
@@ -1153,7 +1158,10 @@ def create_app() -> FastAPI:
                 params={
                     "book_id": f"eq.{book_id}",
                     "user_id": f"eq.{user_id}",
-                    "select": "topic_id",
+                    "select": (
+                        "topic_id,position,day_number,is_optional,"
+                        "minutes_allocated,is_condensed,completed_at"
+                    ),
                     "completed_at": "not.is.null",
                 },
             )
@@ -1188,7 +1196,25 @@ def create_app() -> FastAPI:
                 status_code=502, detail="Could not save the learning path."
             )
         path = path_rows[0]
-        item_rows = [
+        completed_item_rows = [
+            {
+                "path_id": path["id"],
+                "user_id": user_id,
+                "book_id": str(book_id),
+                "topic_id": row["topic_id"],
+                "position": int(row["position"]),
+                "day_number": int(row["day_number"]),
+                "is_optional": bool(row["is_optional"]),
+                "minutes_allocated": int(row["minutes_allocated"]),
+                "is_condensed": bool(row["is_condensed"]),
+                "completed_at": row["completed_at"],
+            }
+            for row in completed_rows
+        ]
+        position_offset = (
+            max((int(row["position"]) for row in completed_item_rows), default=-1) + 1
+        )
+        new_item_rows = [
             {
                 "path_id": path["id"],
                 "user_id": user_id,
@@ -1196,9 +1222,11 @@ def create_app() -> FastAPI:
                 "minutes_allocated": item.minutes_allocated,
                 "is_condensed": item.is_condensed,
                 **item.__dict__,
+                "position": item.position + position_offset,
             }
             for item in items
         ]
+        item_rows = [*completed_item_rows, *new_item_rows]
         if item_rows:
             await backend.request(
                 "POST", "/rest/v1/path_items", json=item_rows, prefer="return=minimal"
@@ -1403,7 +1431,12 @@ def create_app() -> FastAPI:
         shelf = []
         for book in books:
             progress = await get_progress(uuid.UUID(str(book["id"])), user_id, backend)
-            path = await get_path(uuid.UUID(str(book["id"])), user_id, backend)
+            try:
+                path = await get_path(uuid.UUID(str(book["id"])), user_id, backend)
+            except HTTPException as error:
+                if error.status_code != 404:
+                    raise
+                path = {"items": []}
             next_item = next(
                 (
                     item
@@ -1418,6 +1451,8 @@ def create_app() -> FastAPI:
                     "title": book.get("title"),
                     "path_percent": progress["path_percent"],
                     "core_percent": progress["core_percent"],
+                    "topics_understood": progress["topics_understood"],
+                    "topics_total": progress["topics_total"],
                     "next_day": next_item.get("day_number") if next_item else None,
                     "next_minutes": next_item.get("minutes_allocated")
                     if next_item
@@ -1541,9 +1576,15 @@ def create_app() -> FastAPI:
     @app.get("/api/topics/{topic_id}/lesson")
     async def get_topic_lesson(
         topic_id: uuid.UUID,
+        target_minutes: int = Query(default=10, ge=5, le=10),
         user_id: str = Depends(current_user_id),
         backend: SupabaseRest = Depends(get_backend),
     ) -> dict[str, object]:
+        if target_minutes not in {5, 10}:
+            raise HTTPException(
+                status_code=422,
+                detail="Lesson target must be five or ten minutes.",
+            )
         await find_topic_for_user(backend, user_id, topic_id)
         rows = (
             await backend.request(
@@ -1553,6 +1594,7 @@ def create_app() -> FastAPI:
                     "topic_id": f"eq.{topic_id}",
                     "user_id": f"eq.{user_id}",
                     "select": "*",
+                    "target_minutes": f"eq.{target_minutes}",
                     "order": "created_at.desc",
                 },
             )

@@ -487,6 +487,94 @@ def test_book_map_hierarchy_rejects_invalid_root_and_duplicate_positions() -> No
         )
 
 
+def test_rebuilding_path_preserves_completed_items_and_schedules_remaining() -> None:
+    book_id = "9f267ded-b043-46a9-9e5a-53c2665d37df"
+    completed_at = "2026-10-13T12:00:00+00:00"
+
+    class PathBackend:
+        saved_items: list[dict[str, object]] = []
+
+        async def request(self, method: str, path: str, **kwargs: object):
+            if method == "GET" and path == "/rest/v1/books":
+                return httpx.Response(200, json=[{"id": book_id, "user_id": USER_ID}])
+            if method == "GET" and path == "/rest/v1/learning_preferences":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "goal": "understand",
+                            "minutes_per_topic": 10,
+                            "daily_minutes": 20,
+                        }
+                    ],
+                )
+            if method == "GET" and path == "/rest/v1/topics":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": "done-topic",
+                            "parent_id": None,
+                            "importance": 5,
+                            "est_minutes": 10,
+                            "position": 0,
+                        },
+                        {
+                            "id": "next-topic",
+                            "parent_id": None,
+                            "importance": 4,
+                            "est_minutes": 10,
+                            "position": 1,
+                        },
+                    ],
+                )
+            if method == "GET" and path == "/rest/v1/path_items":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "topic_id": "done-topic",
+                            "position": 2,
+                            "day_number": 3,
+                            "is_optional": False,
+                            "minutes_allocated": 8,
+                            "is_condensed": True,
+                            "completed_at": completed_at,
+                        }
+                    ],
+                )
+            if method == "DELETE" and path == "/rest/v1/learning_paths":
+                return httpx.Response(204)
+            if method == "POST" and path == "/rest/v1/learning_paths":
+                return httpx.Response(201, json=[{"id": "rebuilt-path"}])
+            if method == "POST" and path == "/rest/v1/path_items":
+                self.saved_items = kwargs["json"]  # type: ignore[assignment]
+                return httpx.Response(201, json={})
+            raise AssertionError(f"Unexpected Supabase request: {method} {path}")
+
+    backend = PathBackend()
+    app = make_test_app(backend)  # type: ignore[arg-type]
+
+    async def rebuild():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.post(f"/api/books/{book_id}/path")
+
+    response = asyncio.run(rebuild())
+    assert response.status_code == 200
+    assert [row["topic_id"] for row in backend.saved_items] == [
+        "done-topic",
+        "next-topic",
+    ]
+    preserved, scheduled = backend.saved_items
+    assert preserved["completed_at"] == completed_at
+    assert (preserved["position"], preserved["day_number"]) == (2, 3)
+    assert (preserved["minutes_allocated"], preserved["is_condensed"]) == (8, True)
+    assert scheduled["completed_at"] is None
+    assert scheduled["position"] == 3
+
+
 def test_every_new_route_denies_resources_outside_authenticated_scope() -> None:
     class ScopedBackend:
         def __init__(self) -> None:

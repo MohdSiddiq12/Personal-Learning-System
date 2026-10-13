@@ -145,24 +145,24 @@ No Supabase project, credentials, actual model provider key, or legal license de
 - `npm audit --prefix web`: 0 vulnerabilities.
 - `$env:LEARNBOOK_CHROMIUM_EXECUTABLE='C:\Program Files\Google\Chrome\Application\chrome.exe'; uv run pytest -m e2e`: 1 passed, 59 deselected.
 
-## Current capability gap table
+## Current capability gap table after Task 8
 
-| Capability | Status after Task 7 | Remaining limitation |
+| Capability | Status | Remaining limitation |
 | --- | --- | --- |
-| Ranked hierarchical book map | Implemented | Real-book coverage and semantic citation support are unverified. |
-| Preferences and learning path | Implemented | Real Supabase persistence is unverified. |
-| Short lessons with cited source pages | Implemented | Real model provider quality and source fidelity are unverified. |
-| Recall questions | Self-check UI implemented | Answers are not graded and do not gate understood status. |
-| Topic status and progress visual | Implemented | Progress reflects user-set status, not verified recall mastery. |
-| Notes and saved passages | Implemented | Live storage behavior is unverified; passage save uses up to 4,000 characters from a displayed page. |
-| Delete book/library | Implemented | Live cascades and Storage deletion are unverified; account deletion is not implemented. |
-| Public launch | Not ready | Migration application, two-account RLS test, Docker build, abuse/rate limits, legal choices, production configuration, and deployment smoke tests remain. |
+| Digest-based hierarchical book map | Implemented | Heuristic coverage and semantic citation support are unverified on known books. |
+| Server-side Groq jobs and bounded quotas | Implemented | Live Groq behavior, durable workers, multi-instance operation, and real quota accounting are unverified. |
+| Daily time preferences and path | Implemented | Live persistence and path rebuild behavior are unverified against Supabase. |
+| Cited short lessons and source panel | Implemented | Real output quality, target duration, and source fidelity are unverified. |
+| Recall self-check and topic completion | Implemented | Answers are not graded; understood remains self-reported. |
+| Notes, saved passages, learned list, and shelf | Implemented | Live database behavior is unverified. |
+| Progress visual | Implemented | Percentages are self-reported, not mastery results. |
+| Public launch | Not ready | Apply migrations, two-account RLS check, verify Docker build, complete legal/contact decisions, harden limits, and deploy smoke test. |
 
 ## Remaining launch work
 
 Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and abuse reporting, transactional storage quotas, and public deployment requirements before enabling public traffic.
 
-**Recommended next task:** Task 8, add transparent recall grading, make understood status depend on a passed recall check, and compare an independent spaced-repetition scheduler with FSRS before choosing one.
+**Recommended next task:** Task 9, hardening and launch preparation, including live Supabase RLS verification, account deletion, Docker build, container limits, and final privacy/legal review.
 
 ## Reliability fix (2026-10-14)
 
@@ -177,11 +177,11 @@ Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and 
 
 ### Files and behavior
 
-- Replaced Gemini BYOK calls with a server-side Groq-compatible provider. Added bounded retries and wait time, response parsing, request token estimates and caps, a process token bucket, one in-flight provider request per process, JSON mode configuration, and usage capture. No model key or document text is logged or returned.
+- Replaced per-user model credentials with a server-side Groq-compatible provider. Added bounded retries and wait time, response parsing, request token estimates and caps, a process token bucket, one in-flight provider request per process, JSON mode configuration, and usage capture. No model key or document text is logged or returned.
 - Book-map generation now runs as an owner-scoped background job. The new migration adds generation jobs, resumable chunk results, an LLM usage ledger, owner RLS, atomic budget and daily job admission, and an atomic active-job constraint. Completed chunks are reused after interruption.
-- Added map job creation, status, active-job, and retry endpoints. Map generation and lesson generation require an explicit provider data-use consent. The existing lesson endpoint now uses the server provider and no BYOK key.
+- Added map job creation, status, active-job, and retry endpoints. Map generation and lesson generation require an explicit provider data-use consent. The existing lesson endpoint now uses the server provider.
 - Updated the frontend map and lesson consent flows to remove the user API key and show job progress. The frontend continues polling only within the current session; restart recovery and the rest of the pivot flow are Part 3.
-- Updated configuration examples, Render settings, privacy, deployment, architecture, decisions, README, terms, and this handover. The history of the old Gemini decision remains in `TECH_DECISIONS.md` as a retired decision.
+- Updated configuration examples, Render settings, privacy, deployment, architecture, decisions, README, terms, and this handover.
 
 ### Validation
 
@@ -223,4 +223,37 @@ Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and 
 
 - Digest coverage and citation ranges are deterministic, but semantic support and map quality on known books are not evaluated yet.
 - Lesson jobs use the in-process FastAPI background worker; durable queue behavior and live Groq/Supabase quotas remain unverified.
-- Completed status is preserved in `topic_progress` while rebuilt paths omit completed items. Live migration application, RLS and RPC behavior remain unverified.
+- Rebuilding a path now keeps completed path items with their original day, position, allocation, and completion timestamp, then schedules only unfinished topics. Live migration application, RLS and RPC behavior remain unverified.
+
+## Task 8 Part 3 and final verification
+
+### Frontend flow
+
+- Files changed in this checkpoint: `web/src/app/page.tsx`, `web/src/app/layout.tsx`, `web/src/app/globals.css`, `web/src/components/learning/LearningLoop.tsx`, `web/src/components/learning/learningViews.tsx`, new `web/src/components/learning/ShelfBookCard.tsx`, and `web/src/components/learning/learning.test.tsx`.
+- Replaced the page browser, page search, page picker, and text export with the learning flow. The lesson source panel only renders pages cited by the active topic.
+- Added the mode choice, daily-time presets and validated custom time, consent gate, resumable map-job progress and retry states, map tree, ordered path, bonus section, lesson reader, hidden-answer self-check, notes, cited-page passage saving, status and completion actions, learned/progress tabs, and shelf progress cards.
+- Shelf cards now include an accessible path progress bar, percentage, core-ideas count, continue day/time, and book-selection action. UI copy avoids em dashes. Interactive book content stays rendered as text.
+- Added component tests for preset/custom time selection, consent gating, shelf progress, path order and badges, progress calculation, answer reveal, cited source filtering, completion API calls, same-day next-topic and session-done states, cached sequential prefetch, map-job recovery/retry and budget errors, and map-load errors.
+- Added `scripts/smoke_groq.py`. The configured backend key was present, but `GROQ_MODEL` was not configured. The script was run and safely reported that no request was sent. No provider key or book text was printed or transmitted.
+- Updated `src/learnbook/api/main.py` and `tests/test_api.py`: map responses now include the persisted overview, cached lesson reads select the requested 5/10-minute target, shelf reads handle books without a path, and a path rebuild preserves completed items. A focused regression test verifies the saved completion fields.
+- Updated `Agents.md`, `docs/DEPLOYMENT.md`, `docs/PROGRESS.md`, `docs/TECH_DECISIONS.md`, and `docs/TESTING.md` to match the provider, limits, flow, checks, and launch gaps.
+
+### Final checks
+
+- `uv run pytest`: 81 passed, 1 deselected.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 49 Python files already formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked. No runtime dependencies were added.
+- `npm run lint --prefix web`: passed.
+- `npm run test --prefix web`: 16 tests passed across 2 files.
+- `npm run build --prefix web`: passed; `/`, `/_not-found`, and `/terms` built, with `/` and `/terms` statically prerendered.
+- `npm audit --prefix web`: 0 vulnerabilities.
+- Browser smoke test: run with installed Chrome and the local Streamlit prototype. It failed because the prototype remained on Streamlit's “Running...” screen, so the expected “LearnBook” heading never appeared. The public Next.js flow is covered by Vitest and the production build, but browser-level testing remains unverified.
+
+### Self-review and limits
+
+- Tracked-source scans were clear for removed per-user model credentials, browser storage, HTML injection, backend-only credentials in frontend code, em dashes in frontend source, and secret-shaped strings.
+- Live Supabase auth, storage, migrations, RLS, and RPC behavior remain unverified. Live Groq behavior is unverified because no model was configured. Public deployment and Docker build remain unverified.
+- The background worker and token pacing are process-local. Keep a single backend instance until a durable queue and distributed limiter are added.
+
+**Recommended next task:** Task 9, hardening and launch preparation, including the browser-test investigation, live Supabase isolation checks, account deletion, Docker build, and launch/privacy review.
