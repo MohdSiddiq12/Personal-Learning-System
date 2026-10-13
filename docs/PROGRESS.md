@@ -197,3 +197,30 @@ Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and 
 - Groq JSON response mode defaults off because supported models vary; prompts still request JSON and responses are schema validated with one repair attempt.
 - Job workers currently run as FastAPI background tasks, so production deployment must keep a single backend instance as documented. Heartbeats, saved chunks, and retry resume interrupted work, but durable cross-instance queues and transactional topic-tree replacement are deferred.
 - Documented Generation Jobs and Groq limits are configurable. The process token bucket is local to each backend process; the database budget and admission functions enforce the shared daily job and token accounting.
+
+## Task 8 Part 2 checkpoint: digest, paths, lessons, and progress (2026-10-16)
+
+### Files and behavior
+
+- Added `core/understanding/digest.py`, a deterministic extractive digest with term rarity, paragraph and section position, cue phrases, heading proximity, per-section size bounds, page markers, and coverage statistics. PDF ingestion captures outline sections; digest fallback detects headings or uses ten-page windows.
+- Map generation consumes digest passages, merges candidates by normalized title and key-term overlap, caps the compact map, applies deterministic importance and 5/10-minute estimates, drops invalid page references, and labels lexical support `ok` or `weak`.
+- Learning preferences now enforce daily minutes between 5 and 180. Paths place parents first, core ideas before low-importance optional topics, fit daily budgets, condense longer topics, and omit completed topics when rebuilt. Path responses group items by day and report allocated minutes.
+- Added lesson targets, per-target lesson caching, and a lesson job endpoint. Added path-item completion, per-book progress, shelf, and learned-topic endpoints.
+- Added migration `202610160002_digest_path_progress.sql` for topic terms/support, path metadata, lesson target uniqueness, daily digest storage, and PDF outline metadata. New tables have owner RLS.
+
+### Current validation
+
+- Focused digest, scheduler, lesson, and map-resume tests: 19 passed.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 48 Python files formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked.
+- `uv run pytest`: 80 passed, 1 browser test deselected.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 48 Python files already formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked. No dependencies added.
+
+### Limitations and unverified behavior
+
+- Digest coverage and citation ranges are deterministic, but semantic support and map quality on known books are not evaluated yet.
+- Lesson jobs use the in-process FastAPI background worker; durable queue behavior and live Groq/Supabase quotas remain unverified.
+- Completed status is preserved in `topic_progress` while rebuilt paths omit completed items. Live migration application, RLS and RPC behavior remain unverified.

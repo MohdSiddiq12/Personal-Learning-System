@@ -16,7 +16,7 @@ def test_path_is_parent_first_and_importance_ordered() -> None:
         TopicInput("root-high", None, 5, 5, 1),
         TopicInput("child-high", "parent", 5, 5, 0),
     ]
-    result = build_learning_path(topics, PathPreferences(10, 10))
+    result = build_learning_path(topics, PathPreferences(10))
     assert [item.topic_id for item in result] == [
         "root-high",
         "parent",
@@ -32,22 +32,34 @@ def test_path_respects_daily_and_topic_budgets_and_marks_leftovers_optional() ->
     topics = [
         TopicInput("first", None, 5, 6),
         TopicInput("second", None, 4, 6),
-        TopicInput("too-long", None, 3, 11),
+        TopicInput("too-long", None, 2, 11),
     ]
-    result = build_learning_path(topics, PathPreferences(10, 10))
-    assert [(item.topic_id, item.day_number, item.is_optional) for item in result] == [
-        ("first", 1, False),
-        ("second", 2, False),
-        ("too-long", 2, True),
+    result = build_learning_path(topics, PathPreferences(10))
+    assert [
+        (item.topic_id, item.day_number, item.is_optional, item.is_condensed)
+        for item in result
+    ] == [
+        ("first", 1, False, False),
+        ("second", 2, False, False),
+        ("too-long", 3, True, True),
     ]
 
 
 def test_empty_path_and_overlong_for_daily_budget() -> None:
-    assert build_learning_path([], PathPreferences(10, 30)) == []
-    result = build_learning_path(
-        [TopicInput("long", None, 5, 8)], PathPreferences(10, 5)
-    )
-    assert result[0].is_optional
+    assert build_learning_path([], PathPreferences(30)) == []
+    result = build_learning_path([TopicInput("long", None, 5, 8)], PathPreferences(5))
+    assert result[0].is_condensed
+
+
+def test_completed_topics_omitted_and_low_importance_optional() -> None:
+    topics = [
+        TopicInput("done", None, 5, 10),
+        TopicInput("core", None, 4, 10),
+        TopicInput("optional", None, 1, 5),
+    ]
+    result = build_learning_path(topics, PathPreferences(20, frozenset({"done"})))
+    assert [item.topic_id for item in result] == ["core", "optional"]
+    assert [item.is_optional for item in result] == [False, True]
 
 
 @pytest.mark.parametrize(
@@ -59,7 +71,7 @@ def test_empty_path_and_overlong_for_daily_budget() -> None:
 )
 def test_invalid_hierarchy_is_rejected(topics: list[TopicInput]) -> None:
     with pytest.raises(ValueError):
-        build_learning_path(topics, PathPreferences(10, 30))
+        build_learning_path(topics, PathPreferences(30))
 
 
 def test_every_new_table_has_rls_and_owner_policy() -> None:

@@ -16,8 +16,8 @@ PDF ingestion lives in `learnbook.core.ingestion`. Its flow is:
 Path or bytes -> size/header checks -> PyMuPDF validation -> ordered page text + metadata/hash
 ```
 
-The ingestion module is core logic: it has no UI, database, provider, network, OCR, or rendering dependency. Its results keep each page and its 1-based page number separate so later layers can cite source locations.
+The ingestion module is core logic: it has no UI, database, provider, network, OCR, or rendering dependency. Its results keep each page and its 1-based page number separate so later layers can cite source locations. PDF outline sections are retained when present; otherwise the deterministic digest detects headings or uses ten-page windows.
 
 The local prototype lives in learnbook.app; pure display transformations live in view_models.py. Hosted routes live in learnbook.api. Uploaded PDF bytes are parsed in a killable child process, then stored in a private Supabase Storage path scoped to the user. Extracted pages, maps, progress, preferences, paths, lessons, notes, and highlights live in Postgres. Retrieval uses short-lived signed URLs. Delete removes the stored object and cascades the book's database rows. No application log contains document text, title, author, or filename.
 
-learnbook.core.learning_path owns deterministic parent-first scheduling and has no provider or storage imports. The Next.js learning flow renders model and document text as text nodes and requires explicit consent before sending source text to Groq. The current progress count reflects user-set topic status; it is not a mastery result until recall grading is added.
+`learnbook.core.understanding` builds a deterministic extractive digest. `learnbook.core.learning_path` owns deterministic parent-first, time-budgeted scheduling and has no provider or storage imports. Lessons are cached by topic and target duration. Progress and shelf summaries are self-reported status metrics, not graded mastery. The Next.js learning flow renders model and document text as text nodes and requires explicit consent before sending source text to Groq.

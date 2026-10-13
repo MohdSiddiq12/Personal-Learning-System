@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -37,11 +38,13 @@ from learnbook.api.summary import _page_chunks, generate_book_summary
 from learnbook.api.supabase_rest import SupabaseRest
 from learnbook.config import Settings
 from learnbook.core.ingestion.errors import FileTooLargeError, IngestionError
+from learnbook.core.ingestion.models import DocumentSection
 from learnbook.core.learning_path import (
     PathPreferences,
     TopicInput,
     build_learning_path,
 )
+from learnbook.core.understanding.digest import build_digest
 
 logger = logging.getLogger(__name__)
 _BUCKET = "book-pdfs"
@@ -67,6 +70,21 @@ _PUBLIC_BOOK_COLUMNS = (
 )
 _PROCESS_PROVIDER: GroqProvider | None = None
 _PROCESS_PROVIDER_CONFIG: tuple[object, ...] | None = None
+
+
+def digest_to_pages(digest_text: str) -> list[dict[str, object]]:
+    pages: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    for line in digest_text.splitlines():
+        if line.startswith("## "):
+            continue
+        marker = re.fullmatch(r"\[p\.(\d+)\]", line)
+        if marker:
+            current = {"page_number": int(marker.group(1)), "text": ""}
+            pages.append(current)
+        elif current is not None:
+            current["text"] = str(current["text"]) + line + " "
+    return pages
 
 
 def _public_book(book: dict[str, object], duplicate: bool = False) -> dict[str, object]:
@@ -340,10 +358,48 @@ def create_app() -> FastAPI:
                     },
                 )
             ).json()
+            outline_rows = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/book_outlines",
+                    params={
+                        "book_id": f"eq.{book_id}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "sections,structure_source",
+                        "limit": "1",
+                    },
+                )
+            ).json()
+            outline = outline_rows[0] if outline_rows else {}
+            sections = [
+                DocumentSection.model_validate(section)
+                for section in outline.get("sections", [])
+            ]
+            structure_source = str(outline.get("structure_source", "fallback"))
+            digest = build_digest(
+                page_rows, sections=sections, structure_source=structure_source
+            )
+            await backend.request(
+                "POST",
+                "/rest/v1/daily_digests",
+                params={"on_conflict": "book_id"},
+                json={
+                    "book_id": str(book_id),
+                    "user_id": user_id,
+                    "body": digest.text,
+                    "structure_source": digest.structure_source,
+                    "sections_total": digest.sections_total,
+                    "sections_covered": digest.sections_covered,
+                    "pages_covered": digest.pages_covered,
+                },
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
             max_chunk_chars = min(
                 12_000, max(1200, int((settings.groq_max_request_tokens - 1700) * 3.5))
             )
-            total_chunks = len(_page_chunks(page_rows, max_chunk_chars))
+            total_chunks = len(
+                _page_chunks(digest_to_pages(digest.text), max_chunk_chars)
+            )
             cached_rows = (
                 await backend.request(
                     "GET",
@@ -421,6 +477,9 @@ def create_app() -> FastAPI:
                 cached_chunks=cached_chunks,
                 on_chunk=save_chunk,
                 on_usage=record_usage,
+                sections=sections,
+                structure_source=structure_source,
+                digest_result=digest,
             )
             await backend.request(
                 "PATCH",
@@ -619,6 +678,20 @@ def create_app() -> FastAPI:
                 }
                 for page in document.pages
             ]
+            await backend.request(
+                "POST",
+                "/rest/v1/book_outlines",
+                params={"on_conflict": "book_id"},
+                json={
+                    "book_id": str(book_id),
+                    "user_id": user_id,
+                    "sections": [
+                        section.model_dump(mode="json") for section in document.sections
+                    ],
+                    "structure_source": document.structure_source,
+                },
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
             await backend.request(
                 "POST",
                 "/rest/v1/book_pages",
@@ -994,6 +1067,10 @@ def create_app() -> FastAPI:
         user_id: str = Depends(current_user_id),
         backend: SupabaseRest = Depends(get_backend),
     ) -> dict[str, object]:
+        if not 5 <= body.daily_minutes <= 180:
+            raise HTTPException(
+                status_code=422, detail="Daily minutes must be between 5 and 180."
+            )
         await find_book(backend, user_id, book_id)
         payload = {
             "user_id": user_id,
@@ -1069,9 +1146,24 @@ def create_app() -> FastAPI:
                 },
             )
         ).json()
+        completed_rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/path_items",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "topic_id",
+                    "completed_at": "not.is.null",
+                },
+            )
+        ).json()
         items = build_learning_path(
             [TopicInput(**row) for row in topic_rows],
-            PathPreferences(prefs["minutes_per_topic"], prefs["daily_minutes"]),
+            PathPreferences(
+                int(prefs["daily_minutes"]),
+                frozenset(row["topic_id"] for row in completed_rows),
+            ),
         )
         await backend.request(
             "DELETE",
@@ -1101,6 +1193,8 @@ def create_app() -> FastAPI:
                 "path_id": path["id"],
                 "user_id": user_id,
                 "book_id": str(book_id),
+                "minutes_allocated": item.minutes_allocated,
+                "is_condensed": item.is_condensed,
                 **item.__dict__,
             }
             for item in items
@@ -1146,7 +1240,267 @@ def create_app() -> FastAPI:
                 },
             )
         ).json()
-        return {"path": path, "items": items}
+        by_day: dict[int, list[dict[str, object]]] = {}
+        for item in items:
+            by_day.setdefault(int(item["day_number"]), []).append(item)
+        daily = [
+            {
+                "day_number": day,
+                "minutes": sum(
+                    int(item.get("minutes_allocated", 0)) for item in day_items
+                ),
+                "items": day_items,
+            }
+            for day, day_items in sorted(by_day.items())
+        ]
+        return {"path": path, "days": daily, "items": items}
+
+    @app.post("/api/path-items/{item_id}/complete")
+    async def complete_path_item(
+        item_id: uuid.UUID,
+        body: StatusInput,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        if body.status not in {"understood", "review"}:
+            raise HTTPException(status_code=422, detail="Choose understood or review.")
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/path_items",
+                params={
+                    "id": f"eq.{item_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "id,topic_id,book_id",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Path item not found.")
+        item = rows[0]
+        completed_at = datetime.now(UTC).isoformat()
+        await backend.request(
+            "PATCH",
+            "/rest/v1/path_items",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"completed_at": completed_at},
+            prefer="return=minimal",
+        )
+        progress = await backend.request(
+            "POST",
+            "/rest/v1/topic_progress",
+            params={"on_conflict": "user_id,topic_id"},
+            json={
+                "user_id": user_id,
+                "book_id": item["book_id"],
+                "topic_id": item["topic_id"],
+                "status": body.status,
+                "updated_at": completed_at,
+            },
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        return progress.json()[0] if progress.json() else {"status": body.status}
+
+    @app.get("/api/books/{book_id}/progress")
+    async def get_progress(
+        book_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        await find_book(backend, user_id, book_id)
+        topics = (
+            await backend.request(
+                "GET",
+                "/rest/v1/topics",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "id,importance,title",
+                },
+            )
+        ).json()
+        progress = (
+            await backend.request(
+                "GET",
+                "/rest/v1/topic_progress",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "topic_id,status,updated_at",
+                },
+            )
+        ).json()
+        items = (
+            await backend.request(
+                "GET",
+                "/rest/v1/path_items",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": (
+                        "topic_id,day_number,is_optional,minutes_allocated,completed_at"
+                    ),
+                    "order": "position.asc",
+                },
+            )
+        ).json()
+        status_by_id = {row["topic_id"]: row["status"] for row in progress}
+        core = [topic for topic in topics if int(topic["importance"]) >= 4]
+        core_understood = sum(
+            status_by_id.get(topic["id"], "new") == "understood" for topic in core
+        )
+        required = [item for item in items if not item["is_optional"]]
+        total_minutes = sum(int(item.get("minutes_allocated", 0)) for item in required)
+        completed_minutes = sum(
+            int(item.get("minutes_allocated", 0))
+            for item in required
+            if item.get("completed_at")
+            and status_by_id.get(item["topic_id"]) in {"understood", "review"}
+        )
+        days = {int(item["day_number"]) for item in items}
+        current_day = min(
+            (
+                int(item["day_number"])
+                for item in required
+                if not item.get("completed_at")
+            ),
+            default=max(days, default=0),
+        )
+        return {
+            "path_percent": round(100 * completed_minutes / total_minutes)
+            if total_minutes
+            else 0,
+            "core_percent": round(100 * core_understood / len(core)) if core else 0,
+            "topics_total": len(topics),
+            "topics_understood": sum(
+                status == "understood" for status in status_by_id.values()
+            ),
+            "days_total": len(days),
+            "current_day": current_day,
+            "topics": [
+                {**topic, "status": status_by_id.get(topic["id"], "new")}
+                for topic in topics
+            ],
+        }
+
+    @app.get("/api/shelf")
+    async def get_shelf(
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> list[dict[str, object]]:
+        books = (
+            await backend.request(
+                "GET",
+                "/rest/v1/books",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": _PUBLIC_BOOK_COLUMNS,
+                    "order": "created_at.desc",
+                },
+            )
+        ).json()
+        shelf = []
+        for book in books:
+            progress = await get_progress(uuid.UUID(str(book["id"])), user_id, backend)
+            path = await get_path(uuid.UUID(str(book["id"])), user_id, backend)
+            next_item = next(
+                (
+                    item
+                    for item in path["items"]
+                    if not item.get("completed_at") and not item.get("is_optional")
+                ),
+                None,
+            )
+            shelf.append(
+                {
+                    "id": book["id"],
+                    "title": book.get("title"),
+                    "path_percent": progress["path_percent"],
+                    "core_percent": progress["core_percent"],
+                    "next_day": next_item.get("day_number") if next_item else None,
+                    "next_minutes": next_item.get("minutes_allocated")
+                    if next_item
+                    else 0,
+                    "last_activity": max(
+                        (
+                            row.get("updated_at")
+                            for row in progress["topics"]
+                            if row.get("updated_at")
+                        ),
+                        default=book.get("created_at"),
+                    ),
+                }
+            )
+        return shelf
+
+    @app.get("/api/books/{book_id}/learned")
+    async def get_learned(
+        book_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> list[dict[str, object]]:
+        await find_book(backend, user_id, book_id)
+        completed = (
+            await backend.request(
+                "GET",
+                "/rest/v1/path_items",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "completed_at": "not.is.null",
+                    "select": "topic_id,completed_at",
+                },
+            )
+        ).json()
+        result = []
+        for item in completed:
+            topic = await find_topic_for_user(
+                backend, user_id, uuid.UUID(item["topic_id"])
+            )
+            lessons = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/lessons",
+                    params={
+                        "topic_id": f"eq.{item['topic_id']}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "*",
+                    },
+                )
+            ).json()
+            notes = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/notes",
+                    params={
+                        "topic_id": f"eq.{item['topic_id']}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "*",
+                    },
+                )
+            ).json()
+            passages = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/highlights",
+                    params={
+                        "topic_id": f"eq.{item['topic_id']}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "*",
+                    },
+                )
+            ).json()
+            result.append(
+                {
+                    "topic": topic,
+                    "completed_at": item["completed_at"],
+                    "lesson": lessons[0] if lessons else None,
+                    "notes": notes,
+                    "passages": passages,
+                }
+            )
+        return result
 
     @app.put("/api/topics/{topic_id}/status")
     async def put_topic_status(
@@ -1199,13 +1553,168 @@ def create_app() -> FastAPI:
                     "topic_id": f"eq.{topic_id}",
                     "user_id": f"eq.{user_id}",
                     "select": "*",
-                    "limit": "1",
+                    "order": "created_at.desc",
                 },
             )
         ).json()
         if not rows:
             raise HTTPException(status_code=404, detail="Lesson not found.")
         return rows[0]
+
+    async def run_lesson_job(
+        job_id: str,
+        user_id: str,
+        topic_id: uuid.UUID,
+        target_minutes: int,
+        backend: SupabaseRest,
+        settings: Settings,
+        provider: LLMProvider,
+    ) -> None:
+        await set_job_fields(
+            backend,
+            job_id,
+            status="running",
+            step="generating_lesson",
+            progress_pct=10,
+        )
+        try:
+            await create_topic_lesson(
+                ProviderConsentRequest(consent=True, target_minutes=target_minutes),
+                topic_id,
+                user_id,
+                backend,
+                settings,
+                provider,
+            )
+            await set_job_fields(
+                backend,
+                job_id,
+                status="done",
+                step="complete",
+                progress_pct=100,
+                reserved_tokens=0,
+            )
+        except Exception:
+            logger.error("lesson job failed: id=%s", job_id)
+            await set_job_fields(
+                backend,
+                job_id,
+                status="failed",
+                step="failed",
+                error_code="provider_unavailable",
+                error_message=_JOB_FAILURE_MESSAGE,
+                reserved_tokens=0,
+            )
+
+    @app.post("/api/topics/{topic_id}/lesson-jobs", status_code=202)
+    async def create_topic_lesson_job(
+        request: ProviderConsentRequest,
+        topic_id: uuid.UUID,
+        background_tasks: BackgroundTasks,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+        settings: Settings = Depends(get_settings),
+        provider: LLMProvider = Depends(get_provider),
+    ) -> dict[str, object]:
+        if not request.consent:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Confirm the provider data-use notice before generating a lesson."
+                ),
+            )
+        topic = await find_topic_for_user(backend, user_id, topic_id)
+        existing = (
+            await backend.request(
+                "GET",
+                "/rest/v1/lessons",
+                params={
+                    "topic_id": f"eq.{topic_id}",
+                    "user_id": f"eq.{user_id}",
+                    "target_minutes": f"eq.{request.target_minutes}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if existing:
+            return {"cached": existing[0]}
+        estimated = min(
+            settings.groq_max_request_tokens,
+            2200 + len(str(topic.get("summary", ""))) // 3,
+        )
+        response = await backend.request(
+            "POST",
+            "/rest/v1/rpc/create_generation_job",
+            json={
+                "p_user_id": user_id,
+                "p_book_id": topic["book_id"],
+                "p_kind": "lesson",
+                "p_estimated_tokens": estimated,
+                "p_daily_token_budget": settings.groq_daily_token_budget,
+                "p_max_books_per_day": settings.max_books_per_user_per_day,
+                "p_max_lessons_per_day": settings.max_lessons_per_user_per_day,
+                "p_consent_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        row = response.json()
+        if isinstance(row, list):
+            row = row[0] if row else None
+        if not isinstance(row, dict):
+            raise HTTPException(status_code=502, detail="Could not queue this lesson.")
+        job_id = str(row["id"])
+        await backend.request(
+            "PATCH",
+            "/rest/v1/generation_jobs",
+            params={"id": f"eq.{job_id}", "user_id": f"eq.{user_id}"},
+            json={"topic_id": str(topic_id)},
+            prefer="return=minimal",
+        )
+        row.update(
+            {
+                "topic_id": str(topic_id),
+                "total_chunks": 1,
+                "done_chunks": 0,
+                "step": "queued",
+            }
+        )
+        background_tasks.add_task(
+            run_lesson_job,
+            job_id,
+            user_id,
+            topic_id,
+            request.target_minutes,
+            backend,
+            settings,
+            provider,
+        )
+        return GenerationJob.model_validate(row).model_dump(mode="json")
+
+    @app.get("/api/topics/{topic_id}/lesson-jobs/{job_id}")
+    async def get_topic_lesson_job(
+        topic_id: uuid.UUID,
+        job_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        await find_topic_for_user(backend, user_id, topic_id)
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/generation_jobs",
+                params={
+                    "id": f"eq.{job_id}",
+                    "topic_id": f"eq.{topic_id}",
+                    "user_id": f"eq.{user_id}",
+                    "kind": "eq.lesson",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Lesson job not found.")
+        return GenerationJob.model_validate(rows[0]).model_dump(mode="json")
 
     @app.post("/api/topics/{topic_id}/lesson")
     async def create_topic_lesson(
@@ -1225,6 +1734,7 @@ def create_app() -> FastAPI:
                     "topic_id": f"eq.{topic_id}",
                     "user_id": f"eq.{user_id}",
                     "select": "*",
+                    "target_minutes": f"eq.{request.target_minutes}",
                     "limit": "1",
                 },
             )
@@ -1308,6 +1818,7 @@ def create_app() -> FastAPI:
                 pages=page_rows,
                 provider=provider,
                 settings=settings,
+                target_minutes=request.target_minutes,
                 on_usage=record_lesson_usage,
             )
         except ProviderError as error:
@@ -1325,11 +1836,12 @@ def create_app() -> FastAPI:
             "topic_id": str(topic_id),
             "book_id": str(topic["book_id"]),
             **lesson.model_dump(mode="json"),
+            "target_minutes": request.target_minutes,
         }
         response = await backend.request(
             "POST",
             "/rest/v1/lessons",
-            params={"on_conflict": "user_id,topic_id"},
+            params={"on_conflict": "user_id,topic_id,target_minutes"},
             json=payload,
             prefer="resolution=ignore-duplicates,return=representation",
         )

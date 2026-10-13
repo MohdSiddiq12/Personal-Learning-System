@@ -8,7 +8,7 @@ The project owner must review Groq's current data-retention, logging, and usage 
 
 ## Generation limits and job storage
 
-Generation uses a server-side token budget, per-request token cap, process-local token bucket and single-flight request lock, plus per-user daily job limits. The job database stores consent time, job progress, candidate results for completed chunks, and actual token counts. Job and result tables have owner-scoped RLS. The provider key is not stored with jobs.
+Generation uses a server-side token budget, per-request token cap, process-local token bucket and single-flight request lock, plus per-user daily job limits. The job database stores consent time, job progress, candidate results for completed chunks, and actual token counts. Job and result tables have owner-scoped RLS. The provider key is not stored with jobs. A compact deterministic digest and coverage counts are stored per book; the digest contains selected short source sentences, so users must delete the book to remove it.
 
 The current limiter is process-local. Deploy one API instance only until a shared queue, distributed rate limiter, and distributed budget reservation are implemented. A restarted server interrupts active work; stored chunks remain available for retry after the heartbeat is recognized as stale.
 

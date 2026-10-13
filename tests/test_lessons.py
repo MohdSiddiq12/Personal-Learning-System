@@ -22,7 +22,7 @@ BOOK_ID = "9f267ded-b043-46a9-9e5a-53c2665d37df"
 TOPIC_ID = "c737a833-4717-49cf-a41c-62e2e4fe64fb"
 
 
-def lesson_payload(word_count: int = 650) -> dict[str, object]:
+def lesson_payload(word_count: int = 800) -> dict[str, object]:
     return {
         "body": " ".join(["Grounded"] * word_count),
         "recall_questions": [
@@ -135,7 +135,7 @@ def make_app(backend: LessonBackend, provider: FakeProvider | None = None):
     return app
 
 
-def test_lesson_schema_requires_600_to_900_words_and_two_answers() -> None:
+def test_lesson_schema_validates_target_length_and_question_count() -> None:
     TopicLesson.model_validate(lesson_payload())
     with pytest.raises(ValidationError):
         TopicLesson.model_validate(lesson_payload(599))

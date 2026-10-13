@@ -3,6 +3,13 @@
 from pydantic import BaseModel, Field
 
 
+class DocumentSection(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    start_page: int = Field(ge=1)
+    end_page: int = Field(ge=1)
+    level: int = Field(ge=1, le=10)
+
+
 class ExtractedPage(BaseModel):
     """Text and basic content indicators for one 1-based PDF page."""
 
@@ -24,3 +31,5 @@ class ExtractedDocument(BaseModel):
     file_size_bytes: int = Field(ge=0)
     needs_ocr: bool
     warnings: list[str]
+    sections: list[DocumentSection] = Field(default_factory=list)
+    structure_source: str = "fallback"

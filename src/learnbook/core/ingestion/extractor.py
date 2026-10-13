@@ -17,7 +17,11 @@ from learnbook.core.ingestion.errors import (
     InvalidPdfError,
     TooManyPagesError,
 )
-from learnbook.core.ingestion.models import ExtractedDocument, ExtractedPage
+from learnbook.core.ingestion.models import (
+    DocumentSection,
+    ExtractedDocument,
+    ExtractedPage,
+)
 
 logger = logging.getLogger(__name__)
 _OCR_WARNING = "Most pages contain little text; this document may be scanned."
@@ -71,6 +75,38 @@ def _clean_metadata(value: object) -> str | None:
     return cleaned or None
 
 
+def _outline_sections(document, page_count: int) -> list[DocumentSection]:
+    sections: list[DocumentSection] = []
+    try:
+        outline = document.get_toc()
+    except Exception:
+        return sections
+    entries = [
+        (int(level), str(title).strip(), int(page))
+        for level, title, page, *_ in outline
+        if str(title).strip() and 1 <= int(page) <= page_count
+    ]
+    for index, (level, title, start_page) in enumerate(entries):
+        next_page = next(
+            (
+                page
+                for next_level, _, page in entries[index + 1 :]
+                if next_level <= level
+            ),
+            page_count + 1,
+        )
+        end_page = max(start_page, min(page_count, next_page - 1))
+        sections.append(
+            DocumentSection(
+                title=_clean_metadata(title) or "Section",
+                start_page=start_page,
+                end_page=end_page,
+                level=max(1, min(level, 10)),
+            )
+        )
+    return sections
+
+
 def extract_pdf(source: Path | bytes, settings: Settings) -> ExtractedDocument:
     """Validate a PDF and return its normalized text in original page order."""
     file_bytes = _read_source(source, settings)
@@ -105,6 +141,7 @@ def extract_pdf(source: Path | bytes, settings: Settings) -> ExtractedDocument:
             metadata = document.metadata or {}
             title = _clean_metadata(metadata.get("title"))
             author = _clean_metadata(metadata.get("author"))
+            sections = _outline_sections(document, page_count)
     except IngestionError:
         raise
     except Exception as exc:
@@ -129,4 +166,6 @@ def extract_pdf(source: Path | bytes, settings: Settings) -> ExtractedDocument:
         file_size_bytes=len(file_bytes),
         needs_ocr=needs_ocr,
         warnings=warnings,
+        sections=sections,
+        structure_source="outline" if sections else "fallback",
     )

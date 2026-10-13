@@ -18,8 +18,13 @@ async def generate_topic_lesson(
     pages: list[dict[str, object]],
     provider: LLMProvider,
     settings: Settings,
+    target_minutes: int = 10,
     on_usage: UsageCallback | None = None,
 ) -> TopicLesson:
+    if target_minutes not in {5, 10}:
+        raise ValueError("Lesson target must be five or ten minutes.")
+    target_words = target_minutes * 100
+    question_count = 1 if target_minutes == 5 else 2
     allowed_pages = {
         page_number
         for reference in page_refs
@@ -56,8 +61,10 @@ async def generate_topic_lesson(
         {
             "role": "user",
             "content": (
-                "Write a focused lesson of 600 to 900 words about the topic. Return "
-                "body, exactly two recall_questions with question and answer, and one "
+                f"Write a focused lesson of {target_words} words, plus or minus "
+                f"25 percent, about the topic. "
+                f"Return body, exactly {question_count} recall_questions with "
+                "question and answer, and one "
                 "concrete action. Distinguish original examples from the author's "
                 "claims.\nTOPIC\n"
                 + json.dumps({"title": title, "summary": summary}, ensure_ascii=True)

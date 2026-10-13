@@ -91,6 +91,8 @@ class FakeSupabase:
         if method == "POST" and path == "/rest/v1/book_pages":
             self.page_rows = list(json)  # type: ignore[arg-type]
             return httpx.Response(201, json={})
+        if method == "POST" and path == "/rest/v1/book_outlines":
+            return httpx.Response(201, json={})
         if method == "DELETE" and path.startswith("/storage/v1/object/book-pdfs/"):
             self.uploaded_objects = [
                 item for item in self.uploaded_objects if item[0] != path

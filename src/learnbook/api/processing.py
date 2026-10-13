@@ -97,6 +97,14 @@ def extract_pdf_with_timeout(
         error_type = _ERRORS.get(str(payload), InvalidPdfError)
         raise error_type()
     try:
-        return ExtractedDocument.model_validate(payload)
+        document = ExtractedDocument.model_validate(payload)
+        return document.model_copy(
+            update={
+                "sections": [
+                    section.model_dump(mode="json") for section in document.sections
+                ],
+                "structure_source": document.structure_source,
+            }
+        )
     except Exception as error:
         raise InvalidPdfError() from error

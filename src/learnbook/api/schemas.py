@@ -12,11 +12,13 @@ LearningGoal = Literal["understand", "apply", "review"]
 class TopicNode(BaseModel):
     kind: TopicKind
     title: str = Field(min_length=1, max_length=160)
-    summary: str = Field(max_length=1200)
+    summary: str = Field(max_length=500)
     importance: int = Field(ge=1, le=5)
     est_minutes: int = Field(ge=1, le=240)
     position: int = Field(ge=0)
     page_refs: list[int] = Field(min_length=1, max_length=100)
+    key_terms: list[str] = Field(default_factory=list, max_length=12)
+    support: Literal["ok", "weak"] = "ok"
     children: list["TopicNode"] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
@@ -50,6 +52,7 @@ class BookSummary(BaseModel):
     frameworks: list[Idea] = Field(max_length=8)
     practice: list[PracticeQuestion] = Field(max_length=5)
     topics: list[TopicNode] = Field(default_factory=list, max_length=60)
+    digest_stats: dict[str, int | str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_topic_roots(self) -> "BookSummary":
@@ -90,19 +93,25 @@ class RecallAnswer(BaseModel):
 
 class TopicLesson(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
-    recall_questions: list[RecallAnswer] = Field(min_length=2, max_length=2)
+    recall_questions: list[RecallAnswer] = Field(min_length=1, max_length=2)
     action: str = Field(min_length=1, max_length=1000)
+    target_minutes: Literal[5, 10] = 10
 
     @model_validator(mode="after")
     def lesson_length(self) -> "TopicLesson":
         words = len(self.body.split())
-        if not 600 <= words <= 900:
-            raise ValueError("Lesson body must contain 600 to 900 words.")
+        target_words = self.target_minutes * 100
+        if not target_words * 0.75 <= words <= target_words * 1.25:
+            raise ValueError("Lesson body is outside its target length.")
+        expected_questions = 1 if self.target_minutes == 5 else 2
+        if len(self.recall_questions) != expected_questions:
+            raise ValueError("Recall question count must match the lesson target.")
         return self
 
 
 class ProviderConsentRequest(BaseModel):
     consent: bool
+    target_minutes: Literal[5, 10] = 10
 
 
 class MapJobRequest(BaseModel):
