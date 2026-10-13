@@ -168,7 +168,7 @@ Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and 
 
 - Added a JSON service-info response at `/`; `/health` remains the deployment health check. Root and health probes returned HTTP 200 locally, and CORS returned the configured `http://localhost:3000` origin.
 - The frontend now gives an actionable API-unreachable message and ends session initialization with a bounded error state instead of leaving the loading indicator indefinitely.
-- Root cause confirmed from local configuration: the backend `.env` has no Supabase URL or keys, so auth-backed storage requests cannot work in this checkout until the owner configures the Supabase server credentials. The frontend API URL points to localhost, which requires the API process to be running locally.
+- Root cause confirmed from local configuration: the backend `.env` has no Supabase URL or keys, so auth-backed storage requests cannot work in this checkout until the owner configures the Supabase server credentials. The frontend API URL now uses the same explicit IPv4 loopback address as the documented backend bind, which requires the API process to be running locally.
 - Added tests for the API root contract and frontend network failure message.
 - Validation: Python 61 passed, 1 deselected; Ruff lint passed; Ruff format check passed (39 files); frontend lint passed; Vitest 5 passed; production build passed. Local `/` and `/health` plus local-origin CORS probes passed.
 - Live Supabase signup, Storage upload, real account library load, and public deployment remain unverified because server-side Supabase credentials and deployed resources are not configured in this workspace.
