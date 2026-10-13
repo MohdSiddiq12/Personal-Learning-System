@@ -202,6 +202,15 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/")
+    async def service_info() -> dict[str, str]:
+        return {
+            "service": "LearnBook API",
+            "status": "ok",
+            "health": "/health",
+            "docs": "/docs",
+        }
+
     @app.get("/api/books")
     async def list_books(
         user_id: str = Depends(current_user_id),

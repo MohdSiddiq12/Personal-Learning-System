@@ -140,14 +140,26 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
+    setBusy(true);
+    const sessionTimeout = window.setTimeout(() => {
+      if (!active) return;
+      setBusy(false);
+      setError("Sign-in initialization timed out. Check the Supabase URL and your network, then refresh.");
+    }, 12000);
     try {
       const supabase = getSupabaseClient();
-      void supabase.auth.getSession().then(({ data }) => {
-        if (active) {
-          const token = data.session?.access_token ?? "";
-          setAccessToken(token);
-          setBusy(Boolean(token));
-        }
+      void supabase.auth.getSession().then(({ data, error: sessionError }) => {
+        if (!active) return;
+        window.clearTimeout(sessionTimeout);
+        if (sessionError) setError("Could not check your sign-in. Refresh the page or sign in again.");
+        const token = data.session?.access_token ?? "";
+        setAccessToken(token);
+        setBusy(Boolean(token));
+      }).catch(() => {
+        if (!active) return;
+        window.clearTimeout(sessionTimeout);
+        setError("Could not reach the sign-in service. Check your connection and Supabase URL, then retry.");
+        setBusy(false);
       });
       const { data } = supabase.auth.onAuthStateChange((event, session) => {
         if (active) {
@@ -164,9 +176,13 @@ export default function Home() {
       });
       return () => {
         active = false;
+        window.clearTimeout(sessionTimeout);
         data.subscription.unsubscribe();
       };
     } catch {
+      window.clearTimeout(sessionTimeout);
+      setBusy(false);
+      setError("Supabase is not configured. Set the public project URL and key, then restart the frontend.");
       return () => { active = false; };
     }
   }, []);
@@ -220,7 +236,11 @@ export default function Home() {
       }
       setPassword("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not sign in.");
+      const rawMessage = reason instanceof Error ? reason.message : "Could not sign in.";
+      const safeMessage = /invalid path specified in request url/i.test(rawMessage)
+        ? "Supabase rejected the configured project URL. In your frontend hosting settings, set NEXT_PUBLIC_SUPABASE_URL to the Project URL from Supabase Project Settings > API, then rebuild the frontend."
+        : rawMessage;
+      setError(safeMessage);
     }
   }
 

@@ -128,7 +128,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 ### Frontend learning loop
 
 - Added a book-map tree with status, kind, importance, and estimated minutes; saved preferences; ordered daily path with separate optional topics; lesson reading; source-page panel; answer reveal self-check; topic status buttons; topic notes; saved passages; and core progress visual.
-- Core progress is labelled “understood” and counts importance 4 or 5 topics with the understood status. It is not a passed-recall mastery result; Task 8 still needs grading and mastery gating.
+- Core progress is labelled ï¿½understoodï¿½ and counts importance 4 or 5 topics with the understood status. It is not a passed-recall mastery result; Task 8 still needs grading and mastery gating.
 - Document and model text is rendered as React text. The BYOK key stays in component state, clears after generation and on topic/book changes, and is not written to browser storage.
 - Added Vitest, Testing Library, and jsdom as dev-only dependencies. All are MIT licensed and have no usage fee. Vitest was selected for the Vite based component test runner; Jest is the main alternative.
 - Component coverage: path order and optional grouping, core progress calculation and visual labels, hidden/revealed recall answers, and a learning-map error state.
@@ -163,3 +163,12 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and abuse reporting, transactional storage quotas, and public deployment requirements before enabling public traffic.
 
 **Recommended next task:** Task 8, add transparent recall grading, make understood status depend on a passed recall check, and compare an independent spaced-repetition scheduler with FSRS before choosing one.
+
+## Reliability fix (2026-10-14)
+
+- Added a JSON service-info response at `/`; `/health` remains the deployment health check. Root and health probes returned HTTP 200 locally, and CORS returned the configured `http://localhost:3000` origin.
+- The frontend now gives an actionable API-unreachable message and ends session initialization with a bounded error state instead of leaving the loading indicator indefinitely.
+- Root cause confirmed from local configuration: the backend `.env` has no Supabase URL or keys, so auth-backed storage requests cannot work in this checkout until the owner configures the Supabase server credentials. The frontend API URL points to localhost, which requires the API process to be running locally.
+- Added tests for the API root contract and frontend network failure message.
+- Validation: Python 61 passed, 1 deselected; Ruff lint passed; Ruff format check passed (39 files); frontend lint passed; Vitest 5 passed; production build passed. Local `/` and `/health` plus local-origin CORS probes passed.
+- Live Supabase signup, Storage upload, real account library load, and public deployment remain unverified because server-side Supabase credentials and deployed resources are not configured in this workspace.

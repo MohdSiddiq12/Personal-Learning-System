@@ -52,7 +52,17 @@ export async function apiRequest<T>(
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(`${apiUrl}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}${path}`, { ...init, headers });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Could not reach the LearnBook API. Start the backend at the configured NEXT_PUBLIC_API_URL, or check that production setting and redeploy the frontend.",
+      );
+    }
+    throw error;
+  }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(payload?.detail ?? "The request could not be completed.");

@@ -286,6 +286,26 @@ def test_cors_allows_the_configured_local_frontend_origin() -> None:
     ]
 
 
+def test_api_root_returns_service_info() -> None:
+    app = create_app()
+
+    async def request_root() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(request_root())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "LearnBook API",
+        "status": "ok",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 def test_summary_chunks_keep_original_page_markers() -> None:
     chunks = _page_chunks(
         [
