@@ -38,3 +38,9 @@ class EmptyDocumentError(IngestionError):
     """Raised when a valid PDF contains no pages."""
 
     user_message = "This PDF contains no pages."
+
+
+class PdfProcessingTimeoutError(IngestionError):
+    """Raised when parsing exceeds the configured hard timeout."""
+
+    user_message = "PDF processing took too long. Try a smaller or simpler file."

@@ -1,6 +1,6 @@
 # LearnBook
 
-LearnBook is a local-first PDF learning demo that extracts text page by page so readers can browse and search their books. Uploaded files are processed in memory on this machine; the demo has no database, AI integration, or OCR.
+LearnBook is a book-to-learning workspace. It stores your PDF in a private account library, extracts page-cited text, and can generate an original study guide with cited ideas, frameworks, and practice prompts after you explicitly consent and provide a Gemini API key.
 
 ## Windows setup
 
@@ -37,11 +37,15 @@ $env:LEARNBOOK_CHROMIUM_EXECUTABLE = "C:\Program Files\Google\Chrome\Application
 uv run pytest -m e2e
 ```
 
-## Generate samples and run the app
+## Public app architecture
+
+The production direction is Next.js UI + FastAPI/PyMuPDF API + Supabase Auth, Postgres, and private Storage. Streamlit remains available as the local prototype. Frontend and API deployment options, Supabase setup, quotas, privacy limits, and unverified launch steps are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+To configure local Supabase-backed development, set values in `.env` and `web/.env.local` using their examples, apply the SQL migration, then run the API and frontend in separate terminals:
 
 ```powershell
-uv run python scripts/make_sample_pdf.py
-uv run streamlit run src/learnbook/app/main.py
+uv run uvicorn learnbook.api.main:app --reload --host 127.0.0.1 --port 8000
+npm run dev --prefix web
 ```
 
-The sample PDFs are written under the ignored `data/` directory. Streamlit serves the app at `http://localhost:8501` by default.
+Open `http://localhost:3000`. The API health endpoint is `http://localhost:8000/health`. Generate local prototype samples with `uv run python scripts/make_sample_pdf.py`; run the existing Streamlit prototype with `uv run streamlit run src/learnbook/app/main.py`.

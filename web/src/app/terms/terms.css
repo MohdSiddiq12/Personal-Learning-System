@@ -1,0 +1,7 @@
+.terms-shell { width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 54px 0; }
+.terms-back { display: inline-block; margin-bottom: 38px; color: #087d70; font-size: 0.8rem; font-weight: 700; text-decoration: none; }
+.terms-shell h1 { margin: 10px 0 15px; font: 700 clamp(2rem, 5vw, 3.5rem)/1.03 "Space Grotesk", sans-serif; letter-spacing: -0.04em; }
+.terms-warning { padding: 12px; color: #70541b; background: #fff4cc; border-radius: 5px; font-size: 0.78rem; line-height: 1.5; }
+.terms-shell section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #dce1d9; }
+.terms-shell h2 { font-size: 1.15rem; }
+.terms-shell section p { color: #52645c; font-size: 0.9rem; line-height: 1.75; }

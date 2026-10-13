@@ -1,12 +1,14 @@
 # Architecture
 
-The dependency direction is:
+The deployment has two UI paths. Streamlit remains a local prototype; the public app is:
 
 ```text
-app -> core -> providers/storage
+Browser -> Next.js -> FastAPI -> core
+						 |-> Supabase Auth / Postgres / private Storage
+						 |-> Gemini (explicitly consented, BYOK only)
 ```
 
-The Streamlit app translates user interactions into core operations. App code may import core and configuration, but core must never import the app or Streamlit. Provider and storage implementations sit behind boundaries called by core; this keeps framework and persistence choices replaceable.
+The Next.js client uses Supabase Auth for sessions and sends the access token to FastAPI. FastAPI verifies it with Supabase Auth, derives the owner ID from the verified response, and performs explicit owner-filtered repository operations. Its service-role key is server-only. Core owns extraction and document rules; core must not import either UI or API code. The local Streamlit app may import core and configuration, but core must never import Streamlit. Gemini is called only for an opted-in BYOK guide request.
 
 PDF ingestion lives in `learnbook.core.ingestion`. Its flow is:
 
@@ -16,4 +18,4 @@ Path or bytes -> size/header checks -> PyMuPDF validation -> ordered page text +
 
 The ingestion module is core logic: it has no UI, database, provider, network, OCR, or rendering dependency. Its results keep each page and its 1-based page number separate so later layers can cite source locations.
 
-The local app lives in `learnbook.app`. Pure display transformations live in `view_models.py`; Streamlit is confined to `main.py`. Upload bytes are hashed and extracted in memory, with successful extraction results cached only in the current Streamlit session. No uploaded file is written to disk.
+The local prototype lives in `learnbook.app`; pure display transformations live in `view_models.py`. Hosted routes live in `learnbook.api`. Uploaded PDF bytes are parsed in a killable child process, then stored in a private Supabase Storage path scoped to the user; extracted pages and guides live in Postgres. Retrieval uses short-lived signed URLs. Delete removes the stored object and database rows. No application log contains document text, title, author, or filename.

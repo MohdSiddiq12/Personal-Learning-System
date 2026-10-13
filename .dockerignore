@@ -1,0 +1,13 @@
+.git
+.venv
+learn
+web
+data
+tests
+docs
+.env
+.env.*
+!.env.example
+__pycache__
+.pytest_cache
+.ruff_cache

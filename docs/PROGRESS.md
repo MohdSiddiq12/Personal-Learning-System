@@ -20,7 +20,7 @@
 - `uv run ruff format --check .`: passed; 17 files already formatted.
 - CLI subprocess tests passed for a generated PDF and invalid input.
 
-OCR and a timeout for pathological PDFs are not implemented; only upload-size and page-count limits are enforced.
+The core extractor has no OCR; the hosted API adds a killable processing timeout and stricter page limits.
 
 ## Phase 3: Local Streamlit demo
 
@@ -44,8 +44,35 @@ OCR and a timeout for pathological PDFs are not implemented; only upload-size an
 - Playwright screenshots: `data/screenshots/success.png` (53,094 bytes) and `data/screenshots/error.png` (44,434 bytes).
 - The documented Chromium + headless-shell download estimate is approximately 250-300 MB; it was not installed because system Chrome was available.
 
-No upload is written to disk by the app. OCR and a timeout for pathological PDFs remain unimplemented.
+The local Streamlit prototype does not write uploads to local disk. The hosted app retains PDFs privately in Supabase. OCR remains unimplemented.
+
+## Phase 4: Public-service deployment foundation
+
+**Status: Implementation scaffolded; external services not configured**
+
+### Completed
+
+- Added a Next.js interface with Supabase email/password auth, private account library, PDF upload/retrieval/deletion, page search/export, and inline page-cited guide display.
+- Added a FastAPI service that verifies Supabase access tokens, stores PDFs in a private Storage bucket, persists extracted pages/guides in owner-scoped Postgres rows, and uses signed URLs for retrieval.
+- Added process-isolated PDF parsing with a timeout, page/size/text caps, concurrent parser limits, per-account limits, and database-backed per-user upload plus global/user AI-job quotas.
+- Added opt-in BYOK Gemini generation with a provider data-use consent gate and page citation validation.
+- Added a Supabase migration, Docker/Render API starter, Vercel frontend instructions, a draft terms/takedown page, and API tests.
+
+### Validation
+
+- `uv run pytest`: 42 passed, 1 browser test deselected.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 34 Python files already formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked.
+- `npm run lint --prefix web`: passed.
+- `npm run build --prefix web`: passed; `/` and `/terms` prerender.
+- `npm audit --prefix web`: 0 vulnerabilities.
+- Local live smoke: FastAPI `/health` returned `{"status":"ok"}`; `http://localhost:3000/` and `/terms` returned HTTP 200; live CORS allowed the configured localhost origin. The 390px-wide UI rendered the signed-out setup state.
+- `.env` and `web/.env.local` are ignored; `web/.env.example` remains trackable. No PDFs are tracked.
+- `docker build` was attempted but could not connect because Docker Desktop's Linux engine is not running; the image build is unverified.
+
+No Supabase project, credentials, actual Gemini key, or legal license decision is configured here. Real auth/storage/RLS and provider calls remain unverified. The terms page is explicitly a draft; configure the takedown contact and have counsel review it. No public deployment has been made.
 
 ## Next task
 
-Phase 4: Persist extracted documents and page-level source records (SQLite-first planned).
+Review public launch choices: AGPL-3.0 licensing, the copyright/takedown contact, real account-recovery and abuse-report processes, and transactional storage quotas before enabling public traffic.

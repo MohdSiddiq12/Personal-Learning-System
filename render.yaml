@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: learnbook-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "50"
+      - key: MAX_PAGES
+        value: "1500"
+      - key: PUBLIC_MAX_PAGES
+        value: "500"
+      - key: PDF_PROCESSING_TIMEOUT_SECONDS
+        value: "30"
+      - key: MAX_CONCURRENT_INGESTIONS
+        value: "2"
+      - key: UPLOAD_DAILY_LIMIT
+        value: "10"
+      - key: AI_DAILY_SUMMARY_LIMIT
+        value: "3"
+      - key: AI_MONTHLY_SUMMARY_LIMIT
+        value: "500"
