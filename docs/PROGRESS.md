@@ -73,44 +73,44 @@ The local Streamlit prototype does not write uploads to local disk. The hosted a
 
 No Supabase project, credentials, actual Gemini key, or legal license decision is configured here. Real auth/storage/RLS and provider calls remain unverified. The terms page is explicitly a draft; configure the takedown contact and have counsel review it. No public deployment has been made.
 
-## Product Spec Gap Audit (2026-10-13)
+## Task 6: Backend learning foundations (2026-10-13)
 
-| Capability | Status | Implementation | Test coverage |
-| --- | --- | --- | --- |
-| Book map generation | Partial | `src/learnbook/api/summary.py`, `src/learnbook/api/schemas.py`, `web/src/app/page.tsx` | Mock schema/citation test ran; real Gemini output is unverified. Output is a flat overview/ideas/frameworks/practice list, not a ranked topic/subtopic map with study times. |
-| Whole-book coverage (chunking) | Partial | `src/learnbook/api/summary.py::_page_chunks`, `generate_book_summary` | Synthetic page-marker and long-page chunk tests ran. Full-book coverage/coherence on real provider output is unverified; cap is 400,000 extracted characters. |
-| Page-reference validation | Partial | `src/learnbook/api/summary.py::generate_book_summary`, `src/learnbook/api/schemas.py` | Valid page citation test ran. Out-of-range rejection branch and real model citations are unverified; validation checks range, not whether a cited page substantively supports a claim. |
-| Preferences screen | Missing | No preferences model or screen; `web/src/app/page.tsx` has no per-topic minutes, daily time, or goal controls. | No test. |
-| Learning-path builder | Missing | No path-selection or prerequisite-ordering code. | No test. |
-| Lesson reader | Missing | `web/src/app/page.tsx` reads extracted source pages, not generated lessons. | Page-reader tests ran; lesson behavior is unverified/missing. |
-| Recall questions | Partial | `src/learnbook/api/schemas.py::PracticeQuestion`, `src/learnbook/api/summary.py`, `web/src/app/page.tsx::GuidePanel` | Mock summary/schema test ran with no practice items. Recall scoring, answer checking, and mastery gating are missing and unverified. |
-| Saved passages | Missing | No passage table, API route, or UI. | No test. |
-| Notes | Missing | No notes model, persistence, route, or UI. | No test. |
-| Topic status (new/learning/understood/review) | Missing | No topic-status persistence or controls. | No test. |
-| Progress visual | Missing | `web/src/app/page.tsx` has a static product workflow strip only; no book-map status tree, heatmap, or mastered-core percentage. | No test. |
-| Delete data | Partial | `src/learnbook/api/main.py` individual/library delete routes; `web/src/app/page.tsx` delete controls; Supabase cascade in migration | Fake-Supabase delete test ran. Real Storage/Postgres deletion is unverified; usage-quota rows remain for the account, and account deletion is not implemented. |
+**Status: Implemented locally; Supabase migration and live provider remain unverified**
 
-The 42 passing tests are offline/unit/API tests with a fake Supabase boundary. They do not establish live Supabase isolation, actual Gemini quality, or whole-book coverage on a book you know well.
+### Completed
 
-## Product Spec Audit (2026-10-13)
+- Added a new migration for topics, topic progress, learning preferences, paths and path items, highlights, and notes. Each table has owner RLS, user/book indexes, and book deletion cascades. Composite foreign keys keep topic, path, book, and owner references aligned.
+- Expanded BYOK Gemini generation into chunk candidate extraction and whole-book hierarchy synthesis. Pydantic validates map structure and page citations; invalid citations are rejected. The existing consent gate and untrusted-book-text instruction remain in place.
+- Added deterministic core path scheduling, plus authenticated owner-filtered map, path, preferences, topic status, highlight, and note routes with request length limits.
+- Kept the frontend unchanged. Preferences, lessons, recall grading, saved passage UI, and progress visualization remain for Task 7 and Task 8.
+- Removed the duplicate product audit table and empty smoke-test heading.
 
-| Capability | Status | Implementing file(s) | Test coverage / verification |
-| --- | --- | --- | --- |
-| Book map generation | Partial | `src/learnbook/api/summary.py`, `src/learnbook/api/schemas.py`, `web/src/app/page.tsx` | Mock schema/citation path in `tests/test_api.py` was run. Current output is a flat overview/ideas/frameworks/practice guide, not hierarchical topics/subtopics with ranking and study time. Real Gemini generation is unverified. |
-| Whole-book coverage (chunking) | Partial | `src/learnbook/api/summary.py::_page_chunks`, `generate_book_summary` | Synthetic marker/split tests in `tests/test_api.py` were run. Strategy chunks page text at 24k chars, summarizes each chunk, then merges chunk notes; coherent coverage of a real book is unverified. |
-| Page-reference validation | Partial | `src/learnbook/api/summary.py::generate_book_summary`, `src/learnbook/api/schemas.py` | Valid page citation test in `tests/test_api.py` was run. Range check rejects pages outside 1..page_count; invalid-citation rejection has no direct test, and semantic support for a citation is unverified. |
-| Preferences screen | Missing | No preferences screen/model exists in `web/src/app/page.tsx` or API routes. | No test. |
-| Learning-path builder | Missing | No path selection, prerequisite ordering, or optional-topic model exists. | No test. |
-| Lesson reader | Missing | `web/src/app/page.tsx` reads extracted source pages only; no generated lesson entity or route. | Source page browsing tests ran; lesson behavior is missing/unverified. |
-| Recall questions | Partial | `src/learnbook/api/schemas.py::PracticeQuestion`, `src/learnbook/api/summary.py`, `web/src/app/page.tsx::GuidePanel` | Mock guide schema test ran with empty practice items. Practice prompts can be generated, but there is no answer capture, grading, or mastery gate; real questions are unverified. |
-| Saved passages | Missing | No passage/highlight table, API route, or UI. | No test. |
-| Notes | Missing | No notes table, API route, or UI. | No test. |
-| Topic status (new/learning/understood/review) | Missing | No per-topic status model or route. | No test. |
-| Progress visual | Missing | `web/src/app/page.tsx` has a static product workflow strip, not a book-map tree/heatmap or mastery percentage. | No test. |
-| Delete data | Partial | Individual and library delete routes in `src/learnbook/api/main.py`; controls in `web/src/app/page.tsx`; cascades in the Supabase migration. | Fake-Supabase deletion tests in `tests/test_api.py` were run. Real object/DB deletion is unverified; quota audit rows remain until account deletion, and account deletion itself is not implemented. |
+### Validation
 
-### Audit Smoke-Test Readiness
+- `uv run pytest`: 52 passed, 1 browser test deselected after Task 6 changes.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 37 Python files formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked. No dependencies added.
+- Initial frontend checks: `npm install --prefix web`, lint and build passed; `npm audit --prefix web` found 0 vulnerabilities. Frontend files were not changed.
+- Baseline browser test failed because Playwright Chromium was not installed and `LEARNBOOK_CHROMIUM_EXECUTABLE` was unset.
 
+### Decisions, limitations, and unverified items
+
+- The core scheduler keeps over-budget topics in the path as optional items at the end. It does not split one topic across multiple lessons.
+- Supabase policies and cascade behavior were checked by parsing the migration in offline tests. Applying the migration, real RLS isolation, deletion against a live project, and API behavior with live Supabase remain unverified.
+- Real Gemini map quality, coverage, semantic citation support, and provider cost remain unverified. Page references are range-checked, not semantically verified.
+- No new dependencies were added. No secrets were printed or committed.
+
+### Baseline handover verification
+
+- Python suite: 42 passed, 1 deselected. Ruff and format checks passed; locked sync passed.
+- Frontend install, lint, production build, and audit passed; audit reported 0 vulnerabilities.
+- The e2e check was not available: its configured system Chrome was not exposed in this shell, and the Playwright-managed browser is absent.
+- Repo mismatch: `Agents.md` (capital A) is the only untracked file. It was preserved and not included in the code commit.
+
+## Next task
+
+Build the frontend preferences, path, lesson, note/highlight, and progress flows, then add UI-level coverage.
 
 ## Next task
 
