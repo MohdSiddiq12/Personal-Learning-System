@@ -24,7 +24,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ChangeEvent } from "react";
-import { apiRequest, type Book, type BookPage, type BookSummary } from "@/lib/api";
+import { apiRequest, type Book, type BookPage, type BookSummary, type GenerationJob } from "@/lib/api";
 import { getSupabaseClient } from "@/lib/supabase";
 import { LearningLoop } from "@/components/learning/LearningLoop";
 
@@ -121,8 +121,8 @@ export default function Home() {
   const [pageState, setPageState] = useState<{ bookId: string; pages: BookPage[] } | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [search, setSearch] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [dataUseConsent, setDataUseConsent] = useState(false);
+  const [generationJob, setGenerationJob] = useState<GenerationJob | null>(null);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -272,27 +272,35 @@ export default function Home() {
   }
 
   async function handleSummary() {
-    if (!selectedBook || !accessToken || !apiKey || !dataUseConsent) return;
+    if (!selectedBook || !accessToken || !dataUseConsent) return;
     setError("");
     setGenerating(true);
     try {
-      const result = await apiRequest<{ summary: BookSummary }>(
-        `/api/books/${selectedBook.id}/summary`,
+      const queued = await apiRequest<GenerationJob>(
+        `/api/books/${selectedBook.id}/map-jobs`,
         accessToken,
         {
           method: "POST",
-          headers: { "X-Gemini-Api-Key": apiKey },
-          body: JSON.stringify({ data_use_consent: dataUseConsent }),
+          body: JSON.stringify({ consent: dataUseConsent }),
         },
       );
-      setBooks((current) => current.map((book) => book.id === selectedBook.id
-        ? { ...book, summary_json: result.summary }
-        : book));
+      setGenerationJob(queued);
+      let current = queued;
+      while (current.status === "queued" || current.status === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        current = await apiRequest<GenerationJob>(`/api/map-jobs/${queued.id}`, accessToken);
+        setGenerationJob(current);
+      }
+      if (current.status === "failed") {
+        throw new Error(current.error_message || "The learning service could not complete this book map.");
+      }
+      const result = await apiRequest<Book[]>("/api/books", accessToken);
+      setBooks(result);
       setMessage("Your cited guide is ready.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create this guide.");
     } finally {
-      setApiKey("");
+      setDataUseConsent(false);
       setGenerating(false);
     }
   }
@@ -509,14 +517,11 @@ export default function Home() {
                       <div className="summary-gate">
                         <div className="summary-gate-heading"><span className="spark-tile"><Sparkles size={20} /></span><div><p className="eyebrow">YOUR PAGE-CITED STUDY GUIDE</p><h2>Turn the book into usable ideas.</h2></div></div>
                         <p className="gate-copy">A concise overview, key ideas, frameworks, and practice prompts. Every insight points back to the pages it came from.</p>
-                        <details className="provider-notice">
-                          <summary><ShieldCheck size={15} /> Before anything goes to Gemini</summary>
-                          <p>Generating a guide sends extracted book text to Google using the API key you enter below. Google’s current pricing page says Free-tier content may be used to improve products; Paid-tier content is not. Check your account’s terms and do not continue unless you accept them.</p>
-                        </details>
-                        <label className="key-label">Your Gemini API key<input autoComplete="off" onChange={(event) => setApiKey(event.target.value)} placeholder="Used for this request only; never saved" type="password" value={apiKey} /></label>
-                        <label className="consent-line"><input checked={dataUseConsent} onChange={(event) => setDataUseConsent(event.target.checked)} type="checkbox" /><span>I understand the provider notice and authorize sending this book’s extracted text to Google for this guide.</span></label>
-                        <button className="button button-dark" disabled={!apiKey || !dataUseConsent || generating} onClick={() => void handleSummary()} type="button"><Sparkles size={16} />{generating ? "Building your guide…" : "Build my study guide"}<ArrowRight size={16} /></button>
-                        <p className="quota-note">Your key is sent only with this request and is not stored. Daily and global generation limits apply.</p>
+                        <p>Text from this book will be sent to Groq to create a page-cited learning map. Generation uses the site learning service and shared daily capacity.</p>
+                        <label className="consent-line"><input checked={dataUseConsent} onChange={(event) => setDataUseConsent(event.target.checked)} type="checkbox" /><span>I understand and consent to sending this book’s text to Groq to create the learning map.</span></label>
+                        <button className="button button-dark" disabled={!dataUseConsent || generating} onClick={() => void handleSummary()} type="button"><Sparkles size={16} />{generating ? "Building your map…" : "Build my study guide"}<ArrowRight size={16} /></button>
+                        {generationJob && generating && <div className="job-progress" aria-live="polite"><p>{generationJob.step.replaceAll("_", " ")} · {generationJob.progress_pct}%</p><div role="progressbar" aria-label="Learning map progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={generationJob.progress_pct}><span style={{ width: `${generationJob.progress_pct}%` }} /></div><small>This can take a few minutes. You can stay on this page while the map is built.</small></div>}
+                        <p className="quota-note">Daily per-user and shared service capacity limits apply.</p>
                       </div>
                     )}
                   </section>

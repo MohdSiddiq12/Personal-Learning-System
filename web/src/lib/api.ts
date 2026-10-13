@@ -37,6 +37,18 @@ export type BookPage = {
   has_images: boolean;
 };
 
+export type GenerationJob = {
+  id: string;
+  kind: "map" | "lesson";
+  status: "queued" | "running" | "done" | "failed";
+  step: string;
+  progress_pct: number;
+  total_chunks: number;
+  done_chunks: number;
+  error_code: string | null;
+  error_message: string | null;
+};
+
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000").replace(
   /\/$/,
   "",

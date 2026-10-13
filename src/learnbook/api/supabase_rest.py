@@ -83,6 +83,28 @@ class SupabaseRest:
                     detail="Online storage is temporarily unavailable.",
                 ) from error
         if response.is_error and not (allow_not_found and response.status_code == 404):
+            if path in {
+                "/rest/v1/rpc/create_generation_job",
+                "/rest/v1/rpc/retry_generation_job",
+            }:
+                try:
+                    rpc_message = response.json().get("message", "")
+                except (ValueError, AttributeError):
+                    rpc_message = ""
+                if rpc_message == "active_job":
+                    raise HTTPException(
+                        status_code=409, detail="A learning job is already running."
+                    )
+                if rpc_message == "budget_exhausted":
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Daily capacity reached. Please try again tomorrow.",
+                    )
+                if rpc_message == "quota_exceeded":
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Your daily generation limit was reached.",
+                    )
             raise HTTPException(
                 status_code=502,
                 detail="Online storage could not complete the request.",

@@ -5,10 +5,10 @@ The deployment has two UI paths. Streamlit remains a local prototype; the public
 ```text
 Browser -> Next.js -> FastAPI -> core
 						 |-> Supabase Auth / Postgres / private Storage
-						 |-> Gemini (explicitly consented, BYOK only)
+						 |-> Groq chat completions (server-side key, consented background jobs)
 ```
 
-The Next.js client uses Supabase Auth for sessions and sends the access token to FastAPI. FastAPI verifies it with Supabase Auth, derives the owner ID from the verified response, and performs explicit owner-filtered repository operations. Its service-role key is server-only. Core owns extraction and document rules; core must not import either UI or API code. The local Streamlit app may import core and configuration, but core must never import Streamlit. Gemini is called for opted-in BYOK book-map or topic-lesson requests. Lesson generation uses only cited pages plus a one-page neighbor margin, enforces a character cap and AI-job quota, and caches each lesson per user and topic.
+The Next.js client uses Supabase Auth for sessions and sends the access token to FastAPI. FastAPI verifies it with Supabase Auth, derives the owner ID from the verified response, and performs explicit owner-filtered repository operations. Its service-role and Groq keys are server-only. Core owns extraction and document rules; core must not import either UI or API code. Book-map generation runs as a resumable background job. Provider usage is stored in the daily ledger and job chunks are persisted after each completed extraction batch.
 
 PDF ingestion lives in `learnbook.core.ingestion`. Its flow is:
 
@@ -20,4 +20,4 @@ The ingestion module is core logic: it has no UI, database, provider, network, O
 
 The local prototype lives in learnbook.app; pure display transformations live in view_models.py. Hosted routes live in learnbook.api. Uploaded PDF bytes are parsed in a killable child process, then stored in a private Supabase Storage path scoped to the user. Extracted pages, maps, progress, preferences, paths, lessons, notes, and highlights live in Postgres. Retrieval uses short-lived signed URLs. Delete removes the stored object and cascades the book's database rows. No application log contains document text, title, author, or filename.
 
-learnbook.core.learning_path owns deterministic parent-first scheduling and has no provider or storage imports. The Next.js learning flow renders model and document text as text nodes, keeps the BYOK key in component state only, and provides a self-check for recall answers. The current progress count reflects user-set topic status; it is not a mastery result until recall grading is added.
+learnbook.core.learning_path owns deterministic parent-first scheduling and has no provider or storage imports. The Next.js learning flow renders model and document text as text nodes and requires explicit consent before sending source text to Groq. The current progress count reflects user-set topic status; it is not a mastery result until recall grading is added.

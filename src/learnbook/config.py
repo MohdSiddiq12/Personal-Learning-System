@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     data_dir: Path = Path("./data")
     llm_provider: str | None = None
+    environment: str = "development"
     max_upload_mb: int = Field(default=50, gt=0)
     max_pages: int = Field(default=1500, gt=0)
     min_chars_per_page: int = Field(default=50, ge=0)
@@ -33,7 +34,29 @@ class Settings(BaseSettings):
     supabase_anon_key: SecretStr | None = None
     supabase_service_role_key: SecretStr | None = None
     frontend_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    gemini_model: str = "gemini-3.8-flash"
+    groq_api_key: SecretStr | None = None
+    groq_model: str | None = None
+    groq_timeout_seconds: int = Field(default=60, gt=0)
+    groq_max_retries: int = Field(default=3, ge=0, le=10)
+    groq_max_request_tokens: int = Field(default=5000, gt=0)
+    groq_tpm_limit: int = Field(default=6000, gt=0)
+    groq_daily_token_budget: int = Field(default=150_000, gt=0)
+    groq_max_total_wait_seconds: int = Field(default=90, ge=0)
+    groq_json_mode_supported: bool = False
+    max_books_per_user_per_day: int = Field(default=2, gt=0)
+    max_lessons_per_user_per_day: int = Field(default=12, gt=0)
     ai_daily_summary_limit: int = Field(default=3, gt=0)
     ai_monthly_summary_limit: int = Field(default=500, gt=0)
     ai_max_book_chars: int = Field(default=400_000, gt=0)
+
+    @model_validator(mode="after")
+    def production_requires_groq_settings(self) -> "Settings":
+        if self.environment.lower() == "production":
+            if not self.groq_model or not self.groq_model.strip():
+                raise ValueError("GROQ_MODEL must be set in production.")
+            if (
+                not self.groq_api_key
+                or not self.groq_api_key.get_secret_value().strip()
+            ):
+                raise ValueError("GROQ_API_KEY must be set in production.")
+        return self

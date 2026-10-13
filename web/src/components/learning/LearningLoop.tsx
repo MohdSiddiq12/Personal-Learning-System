@@ -56,7 +56,6 @@ export function LearningLoop({
   const [lesson, setLesson] = useState<TopicLesson | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [needsGeneration, setNeedsGeneration] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const [consent, setConsent] = useState(false);
   const [notes, setNotes] = useState<SavedNote[]>([]);
   const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
@@ -74,7 +73,6 @@ export function LearningLoop({
     setActiveTopic(null);
     setLesson(null);
     setNeedsGeneration(false);
-    setApiKey("");
     setConsent(false);
     const pathRequest = apiRequest<{ items: PathItem[] }>(
       "/api/books/" + bookId + "/path",
@@ -118,7 +116,6 @@ export function LearningLoop({
     setActiveTopic(topic);
     setLesson(null);
     setNeedsGeneration(false);
-    setApiKey("");
     setConsent(false);
     setLessonLoading(true);
     setSourcePageNumber(topic.page_refs[0] ?? null);
@@ -136,14 +133,13 @@ export function LearningLoop({
   }
 
   async function generateLesson() {
-    if (!activeTopic || !apiKey || !consent) return;
+    if (!activeTopic || !consent) return;
     setWorking(true);
     setError("");
     try {
       const result = await apiRequest<TopicLesson>("/api/topics/" + activeTopic.id + "/lesson", accessToken, {
         method: "POST",
-        headers: { "X-Gemini-Api-Key": apiKey },
-        body: JSON.stringify({ data_use_consent: consent }),
+        body: JSON.stringify({ consent }),
       });
       setLesson(result);
       setNeedsGeneration(false);
@@ -151,7 +147,6 @@ export function LearningLoop({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not generate this lesson.");
     } finally {
-      setApiKey("");
       setWorking(false);
     }
   }
@@ -282,7 +277,7 @@ export function LearningLoop({
       )}
       {activeTopic && (
         <section className="lesson-modal" aria-labelledby="lesson-modal-title">
-          <div className="lesson-modal-heading"><h2 id="lesson-modal-title">{activeTopic.title}</h2><button aria-label="Close lesson" onClick={() => { setActiveTopic(null); setApiKey(""); setConsent(false); }} type="button">Close</button></div>
+          <div className="lesson-modal-heading"><h2 id="lesson-modal-title">{activeTopic.title}</h2><button aria-label="Close lesson" onClick={() => { setActiveTopic(null); setConsent(false); }} type="button">Close</button></div>
           {lesson ? (
             <LessonReader lesson={lesson} topic={activeTopic} sourcePage={sourcePage}
               onSelectPage={(page) => { setSourcePageNumber(page); onSelectPage(page); }}
@@ -292,10 +287,9 @@ export function LearningLoop({
               onSaveNote={saveNote} onSavePassage={savePassage} />
           ) : lessonLoading ? <p className="learning-muted" aria-live="polite">Loading lesson…</p> : needsGeneration ? (
             <div className="lesson-gate">
-              <p>This lesson sends the topic’s cited pages and one neighboring page to Google Gemini. Your key is used for this request only and is not saved.</p>
-              <label>Gemini API key<input autoComplete="off" onChange={(event) => setApiKey(event.target.value)} type="password" value={apiKey} /></label>
-              <label className="lesson-consent"><input checked={consent} onChange={(event) => setConsent(event.target.checked)} type="checkbox" />I consent to sending these source pages to Google to generate this lesson.</label>
-              <button className="button button-dark" disabled={!apiKey || !consent || working} onClick={() => void generateLesson()} type="button">{working ? "Generating lesson…" : "Generate lesson"}</button>
+              <p>This lesson sends the topic’s cited pages and one neighboring page to Groq for generation. The learning service manages the provider connection.</p>
+              <label className="lesson-consent"><input checked={consent} onChange={(event) => setConsent(event.target.checked)} type="checkbox" />I consent to sending these source pages to Groq to generate this lesson.</label>
+              <button className="button button-dark" disabled={!consent || working} onClick={() => void generateLesson()} type="button">{working ? "Generating lesson…" : "Generate lesson"}</button>
             </div>
           ) : <p className="learning-muted">Choose this topic to load its lesson.</p>}
         </section>

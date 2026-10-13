@@ -8,21 +8,32 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
 from learnbook.api.lessons import generate_topic_lesson
 from learnbook.api.processing import extract_pdf_with_timeout
+from learnbook.api.provider import GroqProvider, LLMProvider, ProviderError
 from learnbook.api.schemas import (
-    GenerateSummaryRequest,
+    GenerationJob,
     HighlightInput,
+    MapJobRequest,
     NoteInput,
     PreferencesInput,
+    ProviderConsentRequest,
     StatusInput,
 )
-from learnbook.api.summary import generate_book_summary
+from learnbook.api.summary import _page_chunks, generate_book_summary
 from learnbook.api.supabase_rest import SupabaseRest
 from learnbook.config import Settings
 from learnbook.core.ingestion.errors import FileTooLargeError, IngestionError
@@ -34,6 +45,12 @@ from learnbook.core.learning_path import (
 
 logger = logging.getLogger(__name__)
 _BUCKET = "book-pdfs"
+_JOB_FAILURE_MESSAGE = (
+    "The learning service could not complete this request. Please retry."
+)
+_STALE_JOB_MESSAGE = (
+    "This generation paused unexpectedly. Retry to continue from saved work."
+)
 _BOOK_COLUMNS = (
     "id,title,author,page_count,file_size_bytes,needs_ocr,created_at,summary_json,"
     "sha256,storage_path,user_id"
@@ -48,6 +65,8 @@ _PUBLIC_BOOK_COLUMNS = (
     "created_at",
     "summary_json",
 )
+_PROCESS_PROVIDER: GroqProvider | None = None
+_PROCESS_PROVIDER_CONFIG: tuple[object, ...] | None = None
 
 
 def _public_book(book: dict[str, object], duplicate: bool = False) -> dict[str, object]:
@@ -63,6 +82,21 @@ def get_settings() -> Settings:
 
 def get_backend(settings: Settings = Depends(get_settings)) -> SupabaseRest:
     return SupabaseRest(settings)
+
+
+def get_provider(settings: Settings = Depends(get_settings)) -> LLMProvider:
+    global _PROCESS_PROVIDER, _PROCESS_PROVIDER_CONFIG
+    key = settings.groq_api_key.get_secret_value() if settings.groq_api_key else None
+    signature = (
+        key,
+        settings.groq_model,
+        settings.groq_tpm_limit,
+        settings.groq_timeout_seconds,
+    )
+    if _PROCESS_PROVIDER is None or signature != _PROCESS_PROVIDER_CONFIG:
+        _PROCESS_PROVIDER = GroqProvider(settings)
+        _PROCESS_PROVIDER_CONFIG = signature
+    return _PROCESS_PROVIDER
 
 
 async def current_user_id(
@@ -96,7 +130,7 @@ def create_app() -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Gemini-Api-Key"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     async def find_book(
@@ -197,6 +231,244 @@ def create_app() -> FastAPI:
             await backend.request(
                 "POST", "/rest/v1/topics", json=rows, prefer="return=minimal"
             )
+
+    async def set_job_fields(
+        backend: SupabaseRest, job_id: str, **fields: object
+    ) -> None:
+        await backend.request(
+            "PATCH",
+            "/rest/v1/generation_jobs",
+            params={"id": f"eq.{job_id}"},
+            json={
+                **fields,
+                "updated_at": datetime.now(UTC).isoformat(),
+                "heartbeat_at": datetime.now(UTC).isoformat(),
+            },
+            prefer="return=minimal",
+        )
+
+    async def run_map_job(
+        job_id: str,
+        user_id: str,
+        book_id: str,
+        backend: SupabaseRest,
+        settings: Settings,
+        provider: LLMProvider,
+    ) -> None:
+        try:
+            job_rows = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/generation_jobs",
+                    params={
+                        "id": f"eq.{job_id}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "*",
+                        "limit": "1",
+                    },
+                )
+            ).json()
+            if not job_rows or job_rows[0]["status"] not in ("queued", "running"):
+                return
+            now = datetime.now(UTC)
+            if job_rows[0]["status"] == "running":
+                heartbeat = datetime.fromisoformat(
+                    str(job_rows[0]["heartbeat_at"]).replace("Z", "+00:00")
+                )
+                if (now - heartbeat).total_seconds() < 300:
+                    return
+            await set_job_fields(
+                backend,
+                job_id,
+                status="running",
+                step="reading_source",
+                error_code=None,
+                error_message=None,
+                heartbeat_at=now.isoformat(),
+            )
+
+            async def maintain_heartbeat() -> None:
+                while True:
+                    await asyncio.sleep(45)
+                    current = (
+                        await backend.request(
+                            "GET",
+                            "/rest/v1/generation_jobs",
+                            params={
+                                "id": f"eq.{job_id}",
+                                "user_id": f"eq.{user_id}",
+                                "select": "status",
+                                "limit": "1",
+                            },
+                        )
+                    ).json()
+                    if not current or current[0].get("status") != "running":
+                        return
+                    await set_job_fields(backend, job_id)
+
+            heartbeat_task = asyncio.create_task(maintain_heartbeat())
+            book_rows = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/books",
+                    params={
+                        "id": f"eq.{book_id}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "id,page_count,needs_ocr",
+                        "limit": "1",
+                    },
+                )
+            ).json()
+            if not book_rows:
+                raise ProviderError(
+                    "provider_unavailable", "This book is no longer available."
+                )
+            if book_rows[0].get("needs_ocr"):
+                raise ProviderError(
+                    "needs_ocr",
+                    "This PDF looks scanned, so its text cannot be read yet.",
+                )
+            page_rows = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/book_pages",
+                    params={
+                        "book_id": f"eq.{book_id}",
+                        "user_id": f"eq.{user_id}",
+                        "select": "page_number,text",
+                        "order": "page_number.asc",
+                    },
+                )
+            ).json()
+            max_chunk_chars = min(
+                12_000, max(1200, int((settings.groq_max_request_tokens - 1700) * 3.5))
+            )
+            total_chunks = len(_page_chunks(page_rows, max_chunk_chars))
+            cached_rows = (
+                await backend.request(
+                    "GET",
+                    "/rest/v1/job_chunk_results",
+                    params={
+                        "job_id": f"eq.{job_id}",
+                        "select": "chunk_index,payload",
+                        "order": "chunk_index.asc",
+                    },
+                )
+            ).json()
+            cached_chunks = {
+                int(row["chunk_index"]): row["payload"] for row in cached_rows
+            }
+            await set_job_fields(
+                backend,
+                job_id,
+                status="running",
+                step="extracting_concepts",
+                total_chunks=total_chunks,
+                done_chunks=len(cached_chunks),
+                progress_pct=min(
+                    85, int(85 * len(cached_chunks) / max(total_chunks, 1))
+                ),
+            )
+
+            async def record_usage(tokens_in: int, tokens_out: int) -> None:
+                await backend.request(
+                    "POST",
+                    "/rest/v1/llm_usage_ledger",
+                    json={
+                        "user_id": user_id,
+                        "job_id": job_id,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                    },
+                    prefer="return=minimal",
+                )
+                await set_job_fields(backend, job_id, step="extracting_concepts")
+
+            async def save_chunk(
+                index: int,
+                payload: dict[str, object],
+                tokens_in: int,
+                tokens_out: int,
+                count: int,
+            ) -> None:
+                await backend.request(
+                    "POST",
+                    "/rest/v1/job_chunk_results",
+                    params={"on_conflict": "job_id,chunk_index"},
+                    json={
+                        "job_id": job_id,
+                        "chunk_index": index,
+                        "payload": payload,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                    },
+                    prefer="resolution=merge-duplicates,return=minimal",
+                )
+                done = index + 1
+                await set_job_fields(
+                    backend,
+                    job_id,
+                    step="extracting_concepts",
+                    total_chunks=count,
+                    done_chunks=done,
+                    progress_pct=min(85, int(85 * done / max(count, 1))),
+                )
+
+            summary = await generate_book_summary(
+                page_rows,
+                provider,
+                settings,
+                cached_chunks=cached_chunks,
+                on_chunk=save_chunk,
+                on_usage=record_usage,
+            )
+            await backend.request(
+                "PATCH",
+                "/rest/v1/books",
+                params={"id": f"eq.{book_id}", "user_id": f"eq.{user_id}"},
+                json={"summary_json": summary.model_dump(mode="json")},
+                prefer="return=minimal",
+            )
+            await set_job_fields(backend, job_id, step="merging_map", progress_pct=95)
+            await save_topic_tree(backend, user_id, uuid.UUID(book_id), summary.topics)
+            await set_job_fields(
+                backend,
+                job_id,
+                status="done",
+                step="complete",
+                progress_pct=100,
+                reserved_tokens=0,
+                error_code=None,
+                error_message=None,
+            )
+            logger.info(
+                "generation job completed: id=%s chunks=%d", job_id, total_chunks
+            )
+        except ProviderError as error:
+            await set_job_fields(
+                backend,
+                job_id,
+                status="failed",
+                step="failed",
+                error_code=error.error_code,
+                error_message=error.user_message,
+                reserved_tokens=0,
+            )
+        except Exception:
+            logger.error("generation job failed: id=%s", job_id)
+            await set_job_fields(
+                backend,
+                job_id,
+                status="failed",
+                step="failed",
+                error_code="provider_unavailable",
+                error_message=_JOB_FAILURE_MESSAGE,
+                reserved_tokens=0,
+            )
+        finally:
+            if "heartbeat_task" in locals():
+                heartbeat_task.cancel()
+                await asyncio.gather(heartbeat_task, return_exceptions=True)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -446,30 +718,87 @@ def create_app() -> FastAPI:
             for row in response.json()
         )
 
-    @app.post("/api/books/{book_id}/summary")
-    async def make_summary(
-        request: GenerateSummaryRequest,
+    async def stale_if_needed(
+        backend: SupabaseRest, job: dict[str, object]
+    ) -> dict[str, object]:
+        if job.get("status") not in ("queued", "running"):
+            return job
+        heartbeat = datetime.fromisoformat(
+            str(job["heartbeat_at"]).replace("Z", "+00:00")
+        )
+        if (datetime.now(UTC) - heartbeat).total_seconds() <= 300:
+            return job
+        await set_job_fields(
+            backend,
+            str(job["id"]),
+            status="failed",
+            step="failed",
+            error_code="stale",
+            error_message=_STALE_JOB_MESSAGE,
+            reserved_tokens=0,
+        )
+        return {
+            **job,
+            "status": "failed",
+            "step": "failed",
+            "error_code": "stale",
+            "error_message": _STALE_JOB_MESSAGE,
+            "reserved_tokens": 0,
+        }
+
+    async def read_job_for_user(
+        backend: SupabaseRest, user_id: str, job_id: uuid.UUID
+    ) -> dict[str, object]:
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/generation_jobs",
+                params={
+                    "id": f"eq.{job_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Generation job not found.")
+        return await stale_if_needed(backend, rows[0])
+
+    def estimate_map_tokens(
+        pages: list[dict[str, object]], settings: Settings
+    ) -> tuple[int, int]:
+        maximum_chars = min(
+            12_000, max(1200, int((settings.groq_max_request_tokens - 1700) * 3.5))
+        )
+        chunks = len(_page_chunks(pages, maximum_chars))
+        source_chars = sum(len(str(page.get("text", ""))) for page in pages)
+        estimated = int(source_chars / 3.5 + 0.999) + chunks * 2400 + 3000
+        return chunks, estimated
+
+    @app.post("/api/books/{book_id}/map-jobs", status_code=202)
+    async def create_map_job(
+        request: MapJobRequest,
         book_id: uuid.UUID,
-        x_gemini_api_key: str = Header(default=""),
+        background_tasks: BackgroundTasks,
         user_id: str = Depends(current_user_id),
         backend: SupabaseRest = Depends(get_backend),
         settings: Settings = Depends(get_settings),
+        provider: LLMProvider = Depends(get_provider),
     ) -> dict[str, object]:
-        if not request.data_use_consent:
+        if request.consent is not True:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Confirm the provider data-use notice before generating a guide."
+                    "Consent is required before sending book text "
+                    "to the learning provider."
                 ),
             )
-        if len(x_gemini_api_key) < 20:
-            raise HTTPException(status_code=400, detail="Enter a valid Gemini API key.")
-        await find_book(backend, user_id, book_id)
-        allowed = await backend.reserve_summary(user_id, settings)
-        if not allowed:
+        book = await find_book(backend, user_id, book_id)
+        if book.get("needs_ocr"):
             raise HTTPException(
-                status_code=429,
-                detail="Your summary limit has been reached. Try again later.",
+                status_code=422,
+                detail="This PDF looks scanned, so its text cannot be read yet.",
             )
         page_response = await backend.request(
             "GET",
@@ -481,20 +810,139 @@ def create_app() -> FastAPI:
                 "order": "page_number.asc",
             },
         )
-        summary = await generate_book_summary(
-            page_response.json(),
-            x_gemini_api_key,
+        pages = page_response.json()
+        if not pages:
+            raise HTTPException(
+                status_code=422, detail="This book has no readable source text."
+            )
+        total_chars = sum(len(str(page.get("text", ""))) for page in pages)
+        if total_chars > settings.ai_max_book_chars:
+            raise HTTPException(
+                status_code=413,
+                detail="This book exceeds the learning-service size limit.",
+            )
+        chunk_count, estimated_tokens = estimate_map_tokens(pages, settings)
+        try:
+            response = await backend.request(
+                "POST",
+                "/rest/v1/rpc/create_generation_job",
+                json={
+                    "p_user_id": user_id,
+                    "p_book_id": str(book_id),
+                    "p_kind": "map",
+                    "p_estimated_tokens": estimated_tokens,
+                    "p_daily_token_budget": settings.groq_daily_token_budget,
+                    "p_max_books_per_day": settings.max_books_per_user_per_day,
+                    "p_max_lessons_per_day": settings.max_lessons_per_user_per_day,
+                    "p_consent_at": datetime.now(UTC).isoformat(),
+                },
+            )
+        except HTTPException as error:
+            if (
+                error.status_code == 502
+                and estimated_tokens > settings.groq_daily_token_budget
+            ):
+                raise HTTPException(
+                    status_code=429,
+                    detail="Daily capacity reached. Please try again tomorrow.",
+                ) from error
+            raise
+        job = response.json()
+        if isinstance(job, list):
+            job = job[0] if job else None
+        if not isinstance(job, dict):
+            raise HTTPException(
+                status_code=502, detail="Could not queue this learning job."
+            )
+        await set_job_fields(backend, str(job["id"]), total_chunks=chunk_count)
+        job["total_chunks"] = chunk_count
+        background_tasks.add_task(
+            run_map_job,
+            str(job["id"]),
+            user_id,
+            str(book_id),
+            backend,
             settings,
+            provider,
         )
-        await backend.request(
-            "PATCH",
-            "/rest/v1/books",
-            params={"id": f"eq.{book_id}", "user_id": f"eq.{user_id}"},
-            json={"summary_json": summary.model_dump(mode="json")},
-            prefer="return=minimal",
+        return GenerationJob.model_validate(job).model_dump(mode="json")
+
+    @app.get("/api/map-jobs/{job_id}")
+    async def get_map_job(
+        job_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        job = await read_job_for_user(backend, user_id, job_id)
+        return GenerationJob.model_validate(job).model_dump(mode="json")
+
+    @app.get("/api/books/{book_id}/active-job")
+    async def get_active_map_job(
+        book_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object] | None:
+        await find_book(backend, user_id, book_id)
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/generation_jobs",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "kind": "eq.map",
+                    "status": "in.(queued,running)",
+                    "select": "*",
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            return None
+        job = await stale_if_needed(backend, rows[0])
+        return GenerationJob.model_validate(job).model_dump(mode="json")
+
+    @app.post("/api/map-jobs/{job_id}/retry", status_code=202)
+    async def retry_map_job(
+        job_id: uuid.UUID,
+        background_tasks: BackgroundTasks,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+        settings: Settings = Depends(get_settings),
+        provider: LLMProvider = Depends(get_provider),
+    ) -> dict[str, object]:
+        job = await read_job_for_user(backend, user_id, job_id)
+        if job["status"] != "failed":
+            raise HTTPException(
+                status_code=409, detail="This generation job cannot be retried yet."
+            )
+        response = await backend.request(
+            "POST",
+            "/rest/v1/rpc/retry_generation_job",
+            json={
+                "p_job_id": str(job_id),
+                "p_user_id": user_id,
+                "p_daily_token_budget": settings.groq_daily_token_budget,
+            },
         )
-        await save_topic_tree(backend, user_id, book_id, summary.topics)
-        return {"book_id": str(book_id), "summary": summary.model_dump(mode="json")}
+        updated = response.json()
+        if isinstance(updated, list):
+            updated = updated[0] if updated else None
+        if not isinstance(updated, dict):
+            raise HTTPException(
+                status_code=502, detail="Could not retry this generation job."
+            )
+        background_tasks.add_task(
+            run_map_job,
+            str(job_id),
+            user_id,
+            str(updated["book_id"]),
+            backend,
+            settings,
+            provider,
+        )
+        return GenerationJob.model_validate(updated).model_dump(mode="json")
 
     @app.get("/api/books/{book_id}/map")
     async def get_book_map(
@@ -761,12 +1209,12 @@ def create_app() -> FastAPI:
 
     @app.post("/api/topics/{topic_id}/lesson")
     async def create_topic_lesson(
-        request: GenerateSummaryRequest,
+        request: ProviderConsentRequest,
         topic_id: uuid.UUID,
-        x_gemini_api_key: str = Header(default=""),
         user_id: str = Depends(current_user_id),
         backend: SupabaseRest = Depends(get_backend),
         settings: Settings = Depends(get_settings),
+        provider: LLMProvider = Depends(get_provider),
     ) -> dict[str, object]:
         topic = await find_topic_for_user(backend, user_id, topic_id)
         existing = (
@@ -783,15 +1231,13 @@ def create_app() -> FastAPI:
         ).json()
         if existing:
             return existing[0]
-        if not request.data_use_consent:
+        if not request.consent:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "Confirm the provider data-use notice before generating a lesson."
                 ),
             )
-        if len(x_gemini_api_key) < 20:
-            raise HTTPException(status_code=400, detail="Enter a valid Gemini API key.")
         if not await backend.reserve_summary(user_id, settings):
             raise HTTPException(
                 status_code=429,
@@ -841,14 +1287,39 @@ def create_app() -> FastAPI:
         ).json()
         if not page_rows:
             raise HTTPException(status_code=422, detail="Source pages are unavailable.")
-        lesson = await generate_topic_lesson(
-            title=str(topic["title"]),
-            summary=str(topic["summary"]),
-            page_refs=referenced_pages,
-            pages=page_rows,
-            api_key=x_gemini_api_key,
-            settings=settings,
-        )
+
+        async def record_lesson_usage(tokens_in: int, tokens_out: int) -> None:
+            await backend.request(
+                "POST",
+                "/rest/v1/llm_usage_ledger",
+                json={
+                    "user_id": user_id,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                },
+                prefer="return=minimal",
+            )
+
+        try:
+            lesson = await generate_topic_lesson(
+                title=str(topic["title"]),
+                summary=str(topic["summary"]),
+                page_refs=referenced_pages,
+                pages=page_rows,
+                provider=provider,
+                settings=settings,
+                on_usage=record_lesson_usage,
+            )
+        except ProviderError as error:
+            status_code = (
+                429
+                if error.error_code
+                in {"rate_limited", "budget_exhausted", "quota_exceeded"}
+                else 502
+            )
+            raise HTTPException(
+                status_code=status_code, detail=error.user_message
+            ) from error
         payload = {
             "user_id": user_id,
             "topic_id": str(topic_id),

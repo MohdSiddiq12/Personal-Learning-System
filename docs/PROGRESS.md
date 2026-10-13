@@ -55,7 +55,7 @@ The local Streamlit prototype does not write uploads to local disk. The hosted a
 - Added a Next.js interface with Supabase email/password auth, private account library, PDF upload/retrieval/deletion, page search/export, and inline page-cited guide display.
 - Added a FastAPI service that verifies Supabase access tokens, stores PDFs in a private Storage bucket, persists extracted pages/guides in owner-scoped Postgres rows, and uses signed URLs for retrieval.
 - Added process-isolated PDF parsing with a timeout, page/size/text caps, concurrent parser limits, per-account limits, and database-backed per-user upload plus global/user AI-job quotas.
-- Added opt-in BYOK Gemini generation with a provider data-use consent gate and page citation validation.
+- Added opt-in legacy provider generation with a provider data-use consent gate and page citation validation.
 - Added a Supabase migration, Docker/Render API starter, Vercel frontend instructions, a draft terms/takedown page, and API tests.
 
 ### Validation
@@ -71,7 +71,7 @@ The local Streamlit prototype does not write uploads to local disk. The hosted a
 - `.env` and `web/.env.local` are ignored; `web/.env.example` remains trackable. No PDFs are tracked.
 - `docker build` was attempted but could not connect because Docker Desktop's Linux engine is not running; the image build is unverified.
 
-No Supabase project, credentials, actual Gemini key, or legal license decision is configured here. Real auth/storage/RLS and provider calls remain unverified. The terms page is explicitly a draft; configure the takedown contact and have counsel review it. No public deployment has been made.
+No Supabase project, credentials, actual model provider key, or legal license decision is configured here. Real auth/storage/RLS and provider calls remain unverified. The terms page is explicitly a draft; configure the takedown contact and have counsel review it. No public deployment has been made.
 
 ## Task 6: Backend learning foundations (2026-10-13)
 
@@ -80,7 +80,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 ### Completed
 
 - Added a new migration for topics, topic progress, learning preferences, paths and path items, highlights, and notes. Each table has owner RLS, user/book indexes, and book deletion cascades. Composite foreign keys keep topic, path, book, and owner references aligned.
-- Expanded BYOK Gemini generation into chunk candidate extraction and whole-book hierarchy synthesis. Pydantic validates map structure and page citations; invalid citations are rejected. The existing consent gate and untrusted-book-text instruction remain in place.
+- Expanded legacy provider generation into chunk candidate extraction and whole-book hierarchy synthesis. Pydantic validates map structure and page citations; invalid citations are rejected. The existing consent gate and untrusted-book-text instruction remain in place.
 - Added deterministic core path scheduling, plus authenticated owner-filtered map, path, preferences, topic status, highlight, and note routes with request length limits.
 - Kept the frontend unchanged during Task 6. Task 7 added the full preference, path, lesson, note/highlight, status, and progress views.
 - Removed the duplicate product audit table and empty smoke-test heading.
@@ -98,7 +98,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 
 - The core scheduler keeps over-budget topics in the path as optional items at the end. It does not split one topic across multiple lessons.
 - Supabase policies and cascade behavior were checked by parsing the migration in offline tests. Applying the migration, real RLS isolation, deletion against a live project, and API behavior with live Supabase remain unverified.
-- Real Gemini map quality, coverage, semantic citation support, and provider cost remain unverified. Page references are range-checked, not semantically verified.
+- Real model provider map quality, coverage, semantic citation support, and provider cost remain unverified. Page references are range-checked, not semantically verified.
 - No Task 6 dependencies were added. No secrets were printed or committed.
 
 ### Baseline handover verification
@@ -110,7 +110,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 
 ## Task 7 backend checkpoint (2026-10-13)
 
-**Status: Complete locally; live Supabase and Gemini behavior remain unverified**
+**Status: Complete locally; live Supabase and model provider behavior remain unverified**
 
 ### Files changed
 
@@ -119,17 +119,17 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 - Documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/PROGRESS.md`, and `docs/TECH_DECISIONS.md`, and `docs/TESTING.md`.
 
 - Added `supabase/migrations/202610150001_lessons.sql` with owner RLS, a unique user/topic cache, and cascading topic/book foreign keys.
-- Added validated lesson generation from cited pages plus a one-page neighbor margin. Source input is capped at 30,000 characters. Generation requires explicit consent, a per-request BYOK key, and an existing AI quota reservation.
-- Added authenticated GET and POST lesson routes. Cached lessons return before consent or quota checks and do not call Gemini again.
+- Added validated lesson generation from cited pages plus a one-page neighbor margin. Source input is capped at 30,000 characters. Generation requires explicit consent, a per-request user-supplied provider key key, and an existing AI quota reservation.
+- Added authenticated GET and POST lesson routes. Cached lessons return before consent or quota checks and do not call model provider again.
 - Tests cover 600-900 word length, exactly two recall answers, caching, topic ownership, quota rejection, selected pages, source cap, untrusted injected text, and migration RLS.
 - Validation checkpoint: `uv run pytest tests/test_lessons.py tests/test_api.py` passed 24 tests; Ruff lint and format checks passed; `uv sync --locked` resolved 66 packages and checked 63 installed packages.
-- Live Supabase migration/RLS and real Gemini lesson output remain unverified.
+- Live Supabase migration/RLS and real model provider lesson output remain unverified.
 
 ### Frontend learning loop
 
 - Added a book-map tree with status, kind, importance, and estimated minutes; saved preferences; ordered daily path with separate optional topics; lesson reading; source-page panel; answer reveal self-check; topic status buttons; topic notes; saved passages; and core progress visual.
 - Core progress is labelled �understood� and counts importance 4 or 5 topics with the understood status. It is not a passed-recall mastery result; Task 8 still needs grading and mastery gating.
-- Document and model text is rendered as React text. The BYOK key stays in component state, clears after generation and on topic/book changes, and is not written to browser storage.
+- Document and model text is rendered as React text. The user-supplied provider key key stays in component state, clears after generation and on topic/book changes, and is not written to browser storage.
 - Added Vitest, Testing Library, and jsdom as dev-only dependencies. All are MIT licensed and have no usage fee. Vitest was selected for the Vite based component test runner; Jest is the main alternative.
 - Component coverage: path order and optional grouping, core progress calculation and visual labels, hidden/revealed recall answers, and a learning-map error state.
 
@@ -151,7 +151,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 | --- | --- | --- |
 | Ranked hierarchical book map | Implemented | Real-book coverage and semantic citation support are unverified. |
 | Preferences and learning path | Implemented | Real Supabase persistence is unverified. |
-| Short lessons with cited source pages | Implemented | Real Gemini quality and source fidelity are unverified. |
+| Short lessons with cited source pages | Implemented | Real model provider quality and source fidelity are unverified. |
 | Recall questions | Self-check UI implemented | Answers are not graded and do not gate understood status. |
 | Topic status and progress visual | Implemented | Progress reflects user-set status, not verified recall mastery. |
 | Notes and saved passages | Implemented | Live storage behavior is unverified; passage save uses up to 4,000 characters from a displayed page. |
@@ -172,3 +172,28 @@ Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and 
 - Added tests for the API root contract and frontend network failure message.
 - Validation: Python 61 passed, 1 deselected; Ruff lint passed; Ruff format check passed (39 files); frontend lint passed; Vitest 5 passed; production build passed. Local `/` and `/health` plus local-origin CORS probes passed.
 - Live Supabase signup, Storage upload, real account library load, and public deployment remain unverified because server-side Supabase credentials and deployed resources are not configured in this workspace.
+
+## Task 8 Part 1 checkpoint: Groq and resumable generation jobs (2026-10-16)
+
+### Files and behavior
+
+- Replaced Gemini BYOK calls with a server-side Groq-compatible provider. Added bounded retries and wait time, response parsing, request token estimates and caps, a process token bucket, one in-flight provider request per process, JSON mode configuration, and usage capture. No model key or document text is logged or returned.
+- Book-map generation now runs as an owner-scoped background job. The new migration adds generation jobs, resumable chunk results, an LLM usage ledger, owner RLS, atomic budget and daily job admission, and an atomic active-job constraint. Completed chunks are reused after interruption.
+- Added map job creation, status, active-job, and retry endpoints. Map generation and lesson generation require an explicit provider data-use consent. The existing lesson endpoint now uses the server provider and no BYOK key.
+- Updated the frontend map and lesson consent flows to remove the user API key and show job progress. The frontend continues polling only within the current session; restart recovery and the rest of the pivot flow are Part 3.
+- Updated configuration examples, Render settings, privacy, deployment, architecture, decisions, README, terms, and this handover. The history of the old Gemini decision remains in `TECH_DECISIONS.md` as a retired decision.
+
+### Validation
+
+- `uv run pytest`: 77 passed, 1 deselected.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 45 Python files already formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked. No new dependencies were added; `httpx` was already installed and locked.
+- Targeted provider, generation-resume, job-route, lesson, API, and configuration tests: 44 passed.
+- Real Groq calls, deployed job execution, live Supabase migration/RLS/RPC behavior, and production quota behavior remain unverified.
+
+### Decisions and limitations
+
+- Groq JSON response mode defaults off because supported models vary; prompts still request JSON and responses are schema validated with one repair attempt.
+- Job workers currently run as FastAPI background tasks, so production deployment must keep a single backend instance as documented. Heartbeats, saved chunks, and retry resume interrupted work, but durable cross-instance queues and transactional topic-tree replacement are deferred.
+- Documented Generation Jobs and Groq limits are configurable. The process token bucket is local to each backend process; the database budget and admission functions enforce the shared daily job and token accounting.

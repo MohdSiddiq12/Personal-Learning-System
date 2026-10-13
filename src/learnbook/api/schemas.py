@@ -101,8 +101,30 @@ class TopicLesson(BaseModel):
         return self
 
 
-class GenerateSummaryRequest(BaseModel):
-    data_use_consent: bool
+class ProviderConsentRequest(BaseModel):
+    consent: bool
+
+
+class MapJobRequest(BaseModel):
+    consent: bool
+
+
+class GenerationJob(BaseModel):
+    id: str
+    user_id: str
+    book_id: str
+    topic_id: str | None = None
+    kind: Literal["map", "lesson"]
+    status: Literal["queued", "running", "done", "failed"]
+    step: str
+    progress_pct: int = Field(ge=0, le=100)
+    total_chunks: int = Field(ge=0)
+    done_chunks: int = Field(ge=0)
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+    heartbeat_at: str
 
 
 class BookRecord(BaseModel):

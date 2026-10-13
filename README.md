@@ -1,6 +1,6 @@
 # LearnBook
 
-LearnBook is a book-to-learning workspace. It stores your PDF in a private account library, builds a page-cited topic map and learning path, and can generate cached short lessons with recall self-checks after you explicitly consent and provide a Gemini API key. It also saves topic status, notes, and page passages.
+LearnBook is a book-to-learning workspace. It stores your PDF in a private account library, builds a page-cited map and time-based learning path, and generates lessons with the server-side Groq provider after you consent. It also saves progress, notes, and page passages.
 
 ## Windows setup
 
@@ -13,7 +13,7 @@ uv sync
 Copy-Item .env.example .env
 ```
 
-Edit `.env` only when you need to override local settings. No API keys are required.
+Edit `.env` with your Supabase server settings and a Groq API key/model to use generation locally. Keep secrets in the server `.env` only and never put them in frontend variables.
 
 ## Checks
 

@@ -16,20 +16,20 @@ Shortform-inspired use cases are adapted as product patterns, not copied content
 ## Supabase setup
 
 1. Create a Supabase project and configure Auth email/password plus email confirmation. Before a public launch, configure a real SMTP sender, site URL, and redirect URLs for localhost and the production frontend.
-2. Apply the migrations in order in the Supabase SQL editor or with the Supabase CLI: [public books](../supabase/migrations/202610130001_public_books.sql), [learning path](../supabase/migrations/202610140001_learning_path.sql), and [lessons](../supabase/migrations/202610150001_lessons.sql). They create owner-scoped books and pages, learning maps and progress, preferences and paths, notes and highlights, cached lessons, RLS policies, the private PDF bucket, and upload/summary quota functions.
-3. Set API secrets on the backend only: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`. The service-role key bypasses RLS and must never be placed in `web/.env.local`, a `NEXT_PUBLIC_*` variable, source control, or browser code.
+2. Apply the migrations in order in the Supabase SQL editor or with the Supabase CLI: [public books](../supabase/migrations/202610130001_public_books.sql), [learning path](../supabase/migrations/202610140001_learning_path.sql), [lessons](../supabase/migrations/202610150001_lessons.sql), and [generation jobs](../supabase/migrations/202610160001_generation_jobs.sql). They create owner-scoped books, maps, learning paths, lessons, resumable generation jobs, chunk results, and token usage records, plus the private PDF bucket and RLS policies.
+3. Set API secrets on the backend only: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, and `GROQ_MODEL`. The service-role and Groq keys must never be placed in `web/.env.local`, a `NEXT_PUBLIC_*` variable, source control, or browser code.
 4. Set frontend values in `web/.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_URL`, and `NEXT_PUBLIC_TAKEDOWN_EMAIL`. The publishable/anon key is designed for browser use; RLS is the access boundary.
 5. Set backend `FRONTEND_ORIGINS` to the exact comma-separated frontend origins. Keep localhost in development and the deployed domain in production.
 
 PDFs are saved under a private bucket path scoped to the authenticated Supabase user. API retrieval uses a five-minute signed URL after ownership verification. Extracted pages, generated guides, topics, lessons, progress, preferences, paths, notes, and highlights are stored in Postgres; deleting a book cascades its related rows and removes its storage object. The API verifies the Supabase access token before any service-role request and derives the owner ID from that verified user, never from a caller-supplied owner field.
 
-The current Supabase pricing page (checked 2026-10-13) lists Free with 500 MB database, 1 GB file storage, and 50 MB maximum upload; free projects can pause after a week of inactivity. Quotas and prices can change. Defaults are 50 MB per PDF, 500 pages per hosted book, a 30-second parser process timeout, two concurrent parser processes per API instance, 3 million extracted characters per book, 10 valid uploads per user per day, 20 books and 100 MB retained PDFs per account, three summary jobs per user per day, and 500 summary jobs globally per month. Account storage/count checks use a PostgREST read followed by upload; simultaneous uploads can still race those checks, so add a transactional storage-reservation RPC before increasing traffic. The AI quota counts jobs, not token cost; BYOK means the user pays the model provider, so no provider spend is charged to the site owner.
+The current Supabase pricing page (checked 2026-10-13) lists Free with 500 MB database, 1 GB file storage, and 50 MB maximum upload; free projects can pause after a week of inactivity. Quotas and prices can change. Defaults are 50 MB per PDF, 500 pages per hosted book, a 30-second parser process timeout, two concurrent parser processes per API instance, 3 million extracted characters per book, 10 valid uploads per user per day, 20 books and 100 MB retained PDFs per account. Generation job creation atomically checks the per-user daily map/lesson limit, one active job per user and kind, and remaining global daily token budget. The owner funds the shared Groq organization account, so the daily budget, per-minute pacing, request caps, and user quotas are required cost controls.
 
-## Summary privacy and cost
+## Model privacy and cost
 
-Guide generation is opt-in and stays blank until the user checks the provider notice and supplies a Gemini API key. The key is sent in a request header, is not persisted, and is not logged by app code. Extracted book text is sent to Google Gemini only for that requested guide. Google's current pricing page says Free-tier content may be used to improve its products; Paid-tier content is not. Users must check their account terms before consenting. A global summary-job cap is also enforced in the database.
+Map and lesson generation requires explicit user consent before sending relevant book text to Groq. The owner configures `GROQ_API_KEY` and `GROQ_MODEL` on the backend only. User-facing consent must explain that relevant source text goes to the provider. The project owner must read Groq's current data-retention and usage terms before launch and update the terms page accordingly. Do not promise provider retention or training behavior without verifying the owner's applicable account terms.
 
-The generated interface guide contains an overview, key ideas, frameworks, practice prompts, and a hierarchical topic map with source page citations. On-demand topic lessons use cited pages plus one neighboring page, are capped at 30,000 source characters, contain two recall questions and one action, and are cached per user and topic. The model is instructed not to follow instructions embedded in source text and not to reproduce long passages; schema validation rejects out-of-range map citations. Generated output still requires user review. Lesson recalls are self-checks and do not currently grade mastery.
+Book maps run as resumable background jobs. Completed per-chunk candidate outputs and actual provider usage are stored after each successful chunk. A server restart interrupts the in-process worker; after a five-minute stale heartbeat, the user can retry and completed chunks are reused. The token bucket and single-flight lock are process-local, so deploy a single API instance until a distributed queue and limiter exist. The database job creation function uses an advisory lock for atomic daily-budget and active-job checks.
 
 ## Local development
 
@@ -42,19 +42,19 @@ Copy-Item web/.env.example web/.env.local
 npm install --prefix web
 ```
 
-Set the Supabase values in `.env` and `web/.env.local`, apply the migrations in order, and allow `http://localhost:3000` in Supabase Auth redirect URLs. Start the API and UI in separate terminals:
+Set Supabase values and `GROQ_API_KEY` plus `GROQ_MODEL` in root `.env`, set public Supabase and API values in `web/.env.local`, apply all migrations in order, and allow `http://localhost:3000` in Supabase Auth redirect URLs. Start the API and UI in separate terminals:
 
 ```powershell
-uv run uvicorn learnbook.api.main:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn learnbook.api.main:app --host 127.0.0.1 --port 8000
 npm run dev --prefix web
 ```
 
-The UI runs at `http://localhost:3000`; API health is at `http://localhost:8000/health`.
+The UI runs at `http://localhost:3000`; API health is at `http://127.0.0.1:8000/health`. The local map-generation worker runs inside the API process. A restart may interrupt a job; retry resumes saved chunks.
 
 ## Deploy
 
 - **Frontend:** import the repository in Vercel and set the project root to `web`. Add the four `NEXT_PUBLIC_*` values from `web/.env.example`.
-- **API:** deploy the root [`Dockerfile`](../Dockerfile) on Render or another Docker host. Set every server variable from `.env.example` in the host's secret/environment settings. Set `FRONTEND_ORIGINS` to the deployed Vercel origin. `render.yaml` is a starter blueprint; enter secrets in the host dashboard.
+- **API:** deploy the root [`Dockerfile`](../Dockerfile) on Render or another Docker host. Set every server variable from `.env.example` in the host's secret/environment settings, including `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_DAILY_TOKEN_BUDGET`, `GROQ_TPM_LIMIT`, `MAX_BOOKS_PER_USER_PER_DAY`, and `MAX_LESSONS_PER_USER_PER_DAY`. Set `ENVIRONMENT=production` and `FRONTEND_ORIGINS` to the deployed Vercel origin. Production startup requires both Groq key and model. `render.yaml` is a starter blueprint; enter secrets in the host dashboard.
 - **Database and files:** apply the migration to the production Supabase project, configure Auth redirect URLs, and confirm the bucket is private and RLS policies are enabled.
 - **Before public traffic:** set the real takedown contact, review the terms/privacy copy with counsel, select a project license, confirm PyMuPDF's AGPL obligations, and test account isolation/deletion using at least two real accounts.
 
@@ -62,7 +62,7 @@ The UI runs at `http://localhost:3000`; API health is at `http://localhost:8000/
 
 The Next.js + FastAPI route is selected for this build. Streamlit Community Cloud remains useful for the existing demo but is not the recommended public multi-user UI. React/Vite + FastAPI is a credible alternative if static hosting is preferred; Gradio is suitable for an AI prototype, not the target account/library product.
 
-No Supabase project or real credentials were available here, so real sign-in, storage, RLS, signed retrieval, deletion, and Gemini calls are not live-verified. Free-tier limits and account terms can change. The current deployment starter also does not yet include a production account-recovery flow, a monitored abuse/report queue, formal terms reviewed by counsel, or hardened container memory/CPU limits. Do not treat this scaffold as a public launch approval.
+No Supabase project or real credentials were available here, so real sign-in, storage, RLS, signed retrieval, deletion, and Groq calls are not live-verified. Free-tier limits and account terms can change. The current deployment starter also does not yet include a production account-recovery flow, a monitored abuse/report queue, formal terms reviewed by counsel, or hardened container memory/CPU limits. Do not treat this scaffold as a public launch approval.
 
 ## Official references
 
@@ -70,5 +70,4 @@ No Supabase project or real credentials were available here, so real sign-in, st
 - [Supabase pricing](https://supabase.com/pricing) — plan/storage quotas and inactivity behavior; recheck before launch.
 - [Supabase Storage access control](https://supabase.com/docs/guides/storage/security/access-control) — private bucket RLS policies.
 - [Supabase standard uploads](https://supabase.com/docs/guides/storage/uploads/standard-uploads) — upload sizes and resumable upload guidance.
-- [Gemini API pricing and data-use tiers](https://ai.google.dev/gemini-api/docs/pricing) — review current free/paid terms before user consent.
 - [Next.js deployment](https://nextjs.org/docs/app/getting-started/deploying), [FastAPI deployment](https://fastapi.tiangolo.com/deployment/), and [Streamlit Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud) — hosting references.

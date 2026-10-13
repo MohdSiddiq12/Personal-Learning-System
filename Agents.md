@@ -49,12 +49,12 @@ Inspiration: Shortform's learning experience (concise guides, frameworks, practi
   - Supabase email/password auth, token verification in the API.
   - Private Storage bucket for PDFs, owner-scoped Postgres rows for pages and guides, signed URLs for retrieval, delete one book or the whole library.
   - Process-isolated PDF parsing with a 30-second timeout, 50 MB upload cap, 500 pages per hosted book, 400,000 extracted characters cap, concurrent parser limits, per-user caps, per-user and global AI-job quotas.
-  - BYOK Gemini guide generation: the user's key is sent per request and never stored, with an explicit provider data-use consent checkbox. Text is chunked (about 24k characters per chunk), summarized per chunk, then merged. Page citations are range-checked.
+  - Server-side Groq generation: the owner key stays on the backend; explicit user consent gates generation. Book-map requests run as resumable jobs, save completed chunks and real usage, and have process pacing plus atomic database budget/job admission.
 - **Last reported checks:** 42 Python tests passed (1 browser test deselected), ruff and format pass, `uv sync --locked` passes, `npm run lint` and `npm run build` pass, `npm audit` reports 0 vulnerabilities.
 
 ### Not verified (important)
 - Real Supabase auth, storage, and RLS (no cross-user isolation test with two real accounts yet).
-- Real Gemini output quality and whole-book coverage on a real book.
+- Real Groq output quality, rate limits, data retention, and whole-book coverage on a real book.
 - `docker build` (Docker engine was not running).
 - Any public deployment.
 
@@ -94,10 +94,10 @@ Supabase (free plan)
    |- Auth
    |- Storage: private bucket, owner-scoped paths, signed URLs
    |- Postgres: owner-scoped rows with RLS on every table
-LLM: Gemini via the user's own key (BYOK), behind a replaceable provider interface
+LLM: server-side Groq API behind a replaceable httpx provider interface; consent-gated jobs and shared daily budgets
 ```
 
-Data flow for a book: upload, validate, extract pages in an isolated process, store the PDF privately and pages in Postgres, user consents and supplies a Gemini key, backend builds the map from chunked text, validates it against a Pydantic schema and page range, stores it, user sets preferences, backend builds the path, user learns and tracks progress.
+Data flow for a book: upload, validate, extract pages and outline in an isolated process, store the PDF privately and pages in Postgres, user consents to send relevant source text to Groq, backend runs resumable generation jobs and stores chunks and token usage, validates the book map, builds a time-based path, and records user progress.
 
 ## 7. Repository layout (verify with the real tree)
 
@@ -124,7 +124,7 @@ D:\Learn-Books
 - **FastAPI + Pydantic:** typed routes, automatic validation, easy testing.
 - **Next.js (web/):** better UX control than Streamlit for notes, highlights, and a progress visual.
 - **Supabase:** auth, Postgres with RLS, and private storage in one free product. Reported free plan limits (checked on the official pricing page on 2026-10-13 by the previous agent, re-verify before relying on them): 500 MB database, 1 GB file storage, 50 MB file limit, free projects can pause after a week of inactivity.
-- **Gemini, BYOK:** keeps the owner's cost near zero and keeps the user in control of what data goes to the provider. The provider sits behind an interface so it can be swapped.
+- **Groq, server key:** keeps provider access behind the API and centralizes budgets and retries. Users consent before relevant book text is sent. The Groq account's current data-retention terms need owner review.
 - **Streamlit:** kept only as a local prototype and demo.
 - **pytest, ruff, Playwright:** unit, lint and format, and one browser smoke test (uses installed Chrome through the `LEARNBOOK_CHROMIUM_EXECUTABLE` variable to avoid a download).
 
@@ -134,7 +134,7 @@ D:\Learn-Books
 - **Service-role key:** backend only. It must never reach the browser bundle or logs. Prefer user-scoped access where possible and rely on RLS as defense in depth.
 - **Limits:** upload 50 MB, 500 pages, 400,000 characters, 30-second parse timeout, concurrent parser cap, per-user book and storage caps, per-user and global AI job quotas. Quotas are database-backed. A known gap: quota accounting is not fully transactional.
 - **Prompt-injection posture:** system instructions must tell the model to ignore instructions inside book text. Output is parsed against a Pydantic schema. Do not execute or render anything the model returns as code or HTML.
-- **BYOK handling:** key arrives per request over HTTPS, is used for that request, and is never stored, logged, echoed back, or included in error messages.
+- **Groq key handling:** `GROQ_API_KEY` exists only in backend environment settings. It is never sent to browser code, stored in rows, logged, echoed, or included in error messages.
 - **Errors:** friendly user messages, no tracebacks to clients.
 - **Health:** `GET /health` returns `{"status":"ok"}`.
 
@@ -195,7 +195,7 @@ Port 8000 is the API and returns `{"detail":"Not Found"}` at `/`. That is normal
 
 **Task 6, backend: book map, path, notes, status** (first task, spec below).
 **Task 7, frontend:** preferences screen, path view, lesson reader, recall questions with answer capture, notes and highlights, topic status, progress visual. Add component or browser tests for the main flow.
-**Task 8, learning mechanics:** recall grading with a transparent rubric (be honest that AI grading is subjective), mastery gating, a simple tested spaced-repetition scheduler kept independent of UI and provider (compare against FSRS in `TECH_DECISIONS.md` before choosing).
+**Task 8, product pivot:** use server-side Groq, resumable jobs, digest-based maps, time-based paths and the new shelf flow. See the current Task 8 handoff for staged acceptance criteria.
 **Task 9, hardening and launch prep:** transactional quotas, account deletion, rate limiting, `docker build` verified, terms page finalized, takedown email set, AGPL decision applied, CORS and auth redirects configured, two-account RLS test against a real Supabase project.
 **Task 10, deploy:** Render and Vercel, smoke test the public URLs, document rollback.
 
@@ -205,7 +205,7 @@ Backend and database only. Do not touch the frontend. Do not use AWS.
 
 1. **Step 0:** read the repo and docs, commit any uncommitted work first, clean up the duplicated audit tables in `docs/PROGRESS.md`.
 2. **Migration (new file):** tables listed in section 11. `topics` fields: id, book_id, user_id, parent_id (nullable), kind (topic, subtopic, framework, principle, method), title, summary, importance 1 to 5, est_minutes, position, page_refs int[]. `topic_progress`: user_id, topic_id, status (new, learning, understood, review), updated_at. `learning_preferences`: user_id, book_id, minutes_per_topic, daily_minutes, goal (understand, apply, review). `learning_paths` and `path_items`: path_id, topic_id, position, day_number, is_optional. `highlights`: id, user_id, book_id, topic_id nullable, page, text, note, created_at. `notes`: id, user_id, book_id, topic_id nullable, body, created_at, updated_at.
-3. **Book map generation (extend `api/summary.py`, keep BYOK and the consent gate):** pass 1 per chunk extracts candidate concepts with kind and page numbers. Pass 2 merges, dedupes, builds the parent and child hierarchy, ranks importance, estimates minutes. Validate with Pydantic. Drop or reject items with page_refs outside 1..page_count. Instruct the model to ignore instructions inside the book. Never log keys or book text.
+3. **Book map generation (extend `api/summary.py`, keep the consent gate):** pass 1 per chunk extracts candidate concepts with kind and page numbers. Pass 2 merges, dedupes, builds the parent and child hierarchy, ranks importance, estimates minutes. Validate with Pydantic. Drop or reject items with page_refs outside 1..page_count. Instruct the model to ignore instructions inside the book. Never log keys or book text.
 4. **Path builder:** a pure function in `src/learnbook/core/`, no AI, no network. Input topics and preferences, output ordered items grouped by day. Parents before children, higher importance first, each item fits minutes_per_topic, each day fits daily_minutes, leftovers marked optional. Deterministic.
 5. **Routes (authenticated, user-scoped):** GET book map, POST build path, GET path, PUT topic status, PUT preferences, POST/GET/DELETE highlights, POST/GET/PUT/DELETE notes. Validate inputs, cap text lengths.
 6. **Tests (offline, fake provider, fake Supabase):** every new table has an RLS policy (parse the SQL), hierarchy validation, direct test for out-of-range page rejection, injected instructions in a chunk do not change behavior, path builder ordering and budget and optional leftovers and empty input and an over-long topic, cross-user access denied on every new route, deleting a book removes related rows.
@@ -219,7 +219,7 @@ Files changed. Commands run with real output summaries. Test counts. Decisions y
 
 - **License:** PyMuPDF is AGPL. Recommendation is to make the repo public under AGPL-3.0, since this is an open portfolio project. Alternative is swapping to a permissively licensed PDF library, which the ingestion layer isolates. Needs the owner's decision and a legal check. This is not legal advice.
 - **Takedown email:** needs a real monitored address.
-- **AI cost model:** current default is BYOK. Optionally, a small owner-funded allowance with strict caps later.
+- **AI cost model:** server-side Groq key with a shared daily budget, request pacing, per-user limits, and consent. Verify current provider data-handling terms before launch.
 - **Supabase project:** the owner creates it and holds the keys. Ask them to apply migrations and fill env files. Never request that they paste secrets into chat.
 - **Copyright posture:** uploads are for personal study of material the user is entitled to use. Store derived notes and page references, not long reproductions. Terms page is a draft pending review.
 

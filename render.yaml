@@ -12,6 +12,20 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: GROQ_DAILY_TOKEN_BUDGET
+        sync: false
+      - key: GROQ_TPM_LIMIT
+        sync: false
+      - key: MAX_BOOKS_PER_USER_PER_DAY
+        sync: false
+      - key: MAX_LESSONS_PER_USER_PER_DAY
+        sync: false
       - key: FRONTEND_ORIGINS
         sync: false
       - key: MAX_UPLOAD_MB

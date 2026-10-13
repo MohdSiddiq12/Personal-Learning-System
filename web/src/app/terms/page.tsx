@@ -16,7 +16,7 @@ export default function TermsPage() {
       </section>
       <section>
         <h2>Your data</h2>
-        <p>Your library is account-scoped. You can delete an individual book or clear the whole library, including stored PDFs, extracted pages, and generated guides. AI guide generation is optional and sends extracted text to Google Gemini only after you enter a key and confirm the provider notice.</p>
+        <p>Your library is account-scoped. You can delete an individual book or clear the whole library, including stored PDFs, extracted pages, and generated learning material. Generation sends relevant source text to Groq only after you consent. Read the current provider terms before continuing.</p>
       </section>
       <section>
         <h2>Copyright and takedown</h2>
