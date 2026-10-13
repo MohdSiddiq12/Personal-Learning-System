@@ -82,7 +82,7 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 - Added a new migration for topics, topic progress, learning preferences, paths and path items, highlights, and notes. Each table has owner RLS, user/book indexes, and book deletion cascades. Composite foreign keys keep topic, path, book, and owner references aligned.
 - Expanded BYOK Gemini generation into chunk candidate extraction and whole-book hierarchy synthesis. Pydantic validates map structure and page citations; invalid citations are rejected. The existing consent gate and untrusted-book-text instruction remain in place.
 - Added deterministic core path scheduling, plus authenticated owner-filtered map, path, preferences, topic status, highlight, and note routes with request length limits.
-- Kept the frontend unchanged. Preferences, lessons, recall grading, saved passage UI, and progress visualization remain for Task 7 and Task 8.
+- Kept the frontend unchanged during Task 6. Task 7 added the full preference, path, lesson, note/highlight, status, and progress views.
 - Removed the duplicate product audit table and empty smoke-test heading.
 
 ### Validation
@@ -92,37 +92,74 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 - `uv run ruff format --check .`: passed; 37 Python files formatted.
 - `uv sync --locked`: passed; 66 packages resolved and 63 checked. No dependencies added.
 - Initial frontend checks: `npm install --prefix web`, lint and build passed; `npm audit --prefix web` found 0 vulnerabilities. Frontend files were not changed.
-- Baseline browser test failed because Playwright Chromium was not installed and `LEARNBOOK_CHROMIUM_EXECUTABLE` was unset.
+- At Task 6 baseline, the browser test could not run because Playwright Chromium was absent and `LEARNBOOK_CHROMIUM_EXECUTABLE` was unset. Task 7 later ran it with system Chrome successfully.
 
 ### Decisions, limitations, and unverified items
 
 - The core scheduler keeps over-budget topics in the path as optional items at the end. It does not split one topic across multiple lessons.
 - Supabase policies and cascade behavior were checked by parsing the migration in offline tests. Applying the migration, real RLS isolation, deletion against a live project, and API behavior with live Supabase remain unverified.
 - Real Gemini map quality, coverage, semantic citation support, and provider cost remain unverified. Page references are range-checked, not semantically verified.
-- No new dependencies were added. No secrets were printed or committed.
+- No Task 6 dependencies were added. No secrets were printed or committed.
 
 ### Baseline handover verification
 
 - Python suite: 42 passed, 1 deselected. Ruff and format checks passed; locked sync passed.
 - Frontend install, lint, production build, and audit passed; audit reported 0 vulnerabilities.
-- The e2e check was not available: its configured system Chrome was not exposed in this shell, and the Playwright-managed browser is absent.
+- The configured system Chrome path was available during Task 7 and the existing Streamlit browser smoke test passed.
 - Repo mismatch: `Agents.md` (capital A) is the only untracked file. It was preserved and not included in the code commit.
-
-## Next task
-
-Build the frontend preferences, path, lesson, note/highlight, and progress flows, then add UI-level coverage.
 
 ## Task 7 backend checkpoint (2026-10-13)
 
-**Status: Lessons API and storage are implemented locally; frontend work is in progress**
+**Status: Complete locally; live Supabase and Gemini behavior remain unverified**
+
+### Files changed
+
+- Backend: `src/learnbook/api/main.py`, `src/learnbook/api/schemas.py`, new `src/learnbook/api/lessons.py`, new `supabase/migrations/202610150001_lessons.sql`, and `tests/test_lessons.py` (later full suite: 60 passed, 1 deselected).
+- Frontend: `web/src/components/learning/LearningLoop.tsx`, `web/src/components/learning/learningViews.tsx`, `web/src/components/learning/learning.test.tsx`, `web/src/test/setup.ts`, `web/vitest.config.mts`, `web/package.json`, `web/package-lock.json`, `web/src/app/page.tsx`, and `web/src/app/globals.css`.
+- Documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/PROGRESS.md`, and `docs/TECH_DECISIONS.md`, and `docs/TESTING.md`.
 
 - Added `supabase/migrations/202610150001_lessons.sql` with owner RLS, a unique user/topic cache, and cascading topic/book foreign keys.
 - Added validated lesson generation from cited pages plus a one-page neighbor margin. Source input is capped at 30,000 characters. Generation requires explicit consent, a per-request BYOK key, and an existing AI quota reservation.
 - Added authenticated GET and POST lesson routes. Cached lessons return before consent or quota checks and do not call Gemini again.
 - Tests cover 600-900 word length, exactly two recall answers, caching, topic ownership, quota rejection, selected pages, source cap, untrusted injected text, and migration RLS.
-- Validation checkpoint: `uv run pytest tests/test_lessons.py tests/test_api.py` passed 23 tests; Ruff lint and format checks passed; `uv sync --locked` resolved 66 packages and checked 63 installed packages.
+- Validation checkpoint: `uv run pytest tests/test_lessons.py tests/test_api.py` passed 24 tests; Ruff lint and format checks passed; `uv sync --locked` resolved 66 packages and checked 63 installed packages.
 - Live Supabase migration/RLS and real Gemini lesson output remain unverified.
+
+### Frontend learning loop
+
+- Added a book-map tree with status, kind, importance, and estimated minutes; saved preferences; ordered daily path with separate optional topics; lesson reading; source-page panel; answer reveal self-check; topic status buttons; topic notes; saved passages; and core progress visual.
+- Core progress is labelled “understood” and counts importance 4 or 5 topics with the understood status. It is not a passed-recall mastery result; Task 8 still needs grading and mastery gating.
+- Document and model text is rendered as React text. The BYOK key stays in component state, clears after generation and on topic/book changes, and is not written to browser storage.
+- Added Vitest, Testing Library, and jsdom as dev-only dependencies. All are MIT licensed and have no usage fee. Vitest was selected for the Vite based component test runner; Jest is the main alternative.
+- Component coverage: path order and optional grouping, core progress calculation and visual labels, hidden/revealed recall answers, and a learning-map error state.
+
+### Task 7 acceptance results
+
+- `uv run pytest`: 60 passed, 1 browser test deselected.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: passed; 39 Python files formatted.
+- `uv sync --locked`: passed; 66 packages resolved and 63 checked.
+- `npm run test --prefix web`: 4 component tests passed.
+- `npm run lint --prefix web`: passed.
+- `npm run build --prefix web`: passed; `/` and `/terms` prerendered.
+- `npm audit --prefix web`: 0 vulnerabilities.
+- `$env:LEARNBOOK_CHROMIUM_EXECUTABLE='C:\Program Files\Google\Chrome\Application\chrome.exe'; uv run pytest -m e2e`: 1 passed, 59 deselected.
+
+## Current capability gap table
+
+| Capability | Status after Task 7 | Remaining limitation |
+| --- | --- | --- |
+| Ranked hierarchical book map | Implemented | Real-book coverage and semantic citation support are unverified. |
+| Preferences and learning path | Implemented | Real Supabase persistence is unverified. |
+| Short lessons with cited source pages | Implemented | Real Gemini quality and source fidelity are unverified. |
+| Recall questions | Self-check UI implemented | Answers are not graded and do not gate understood status. |
+| Topic status and progress visual | Implemented | Progress reflects user-set status, not verified recall mastery. |
+| Notes and saved passages | Implemented | Live storage behavior is unverified; passage save uses up to 4,000 characters from a displayed page. |
+| Delete book/library | Implemented | Live cascades and Storage deletion are unverified; account deletion is not implemented. |
+| Public launch | Not ready | Migration application, two-account RLS test, Docker build, abuse/rate limits, legal choices, production configuration, and deployment smoke tests remain. |
 
 ## Remaining launch work
 
 Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and abuse reporting, transactional storage quotas, and public deployment requirements before enabling public traffic.
+
+**Recommended next task:** Task 8, add transparent recall grading, make understood status depend on a passed recall check, and compare an independent spaced-repetition scheduler with FSRS before choosing one.

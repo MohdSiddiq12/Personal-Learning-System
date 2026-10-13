@@ -134,7 +134,7 @@ def test_cached_lesson_avoids_second_provider_call(
 
     monkeypatch.setattr(lesson_module, "_generate_json", fake_generate_json)
 
-    async def create_twice() -> tuple[httpx.Response, httpx.Response]:
+    async def create_twice() -> tuple[httpx.Response, httpx.Response, httpx.Response]:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -147,11 +147,13 @@ def test_cached_lesson_avoids_second_provider_call(
                 f"/api/topics/{TOPIC_ID}/lesson",
                 json={"data_use_consent": False},
             )
-        return first, second
+            cached = await client.get(f"/api/topics/{TOPIC_ID}/lesson")
+        return first, second, cached
 
-    first, second = asyncio.run(create_twice())
-    assert first.status_code == second.status_code == 200
+    first, second, cached = asyncio.run(create_twice())
+    assert first.status_code == second.status_code == cached.status_code == 200
     assert first.json()["body"] == second.json()["body"]
+    assert first.json()["body"] == cached.json()["body"]
     assert len(calls) == 1
     assert backend.reservations == 1
     page_request = next(
@@ -197,6 +199,32 @@ def test_lesson_generation_respects_ai_quota(
     response = asyncio.run(create_lesson())
     assert response.status_code == 429
     assert backend.reservations == 1
+
+
+def test_lesson_generation_requires_consent_before_quota_or_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = LessonBackend()
+    app = make_app(backend)
+
+    async def forbidden_provider(*args: object, **kwargs: object):
+        raise AssertionError("Provider must not run without consent.")
+
+    monkeypatch.setattr(lesson_module, "_generate_json", forbidden_provider)
+
+    async def create_lesson() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.post(
+                f"/api/topics/{TOPIC_ID}/lesson",
+                headers={"X-Gemini-Api-Key": "x" * 24},
+                json={"data_use_consent": False},
+            )
+
+    response = asyncio.run(create_lesson())
+    assert response.status_code == 400
+    assert backend.reservations == 0
 
 
 def test_cross_user_lesson_read_and_generation_are_denied() -> None:

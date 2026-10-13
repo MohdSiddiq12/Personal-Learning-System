@@ -1,6 +1,6 @@
 # LearnBook
 
-LearnBook is a book-to-learning workspace. It stores your PDF in a private account library, extracts page-cited text, and can generate an original study guide with cited ideas, frameworks, and practice prompts after you explicitly consent and provide a Gemini API key.
+LearnBook is a book-to-learning workspace. It stores your PDF in a private account library, builds a page-cited topic map and learning path, and can generate cached short lessons with recall self-checks after you explicitly consent and provide a Gemini API key. It also saves topic status, notes, and page passages.
 
 ## Windows setup
 
@@ -21,6 +21,10 @@ Edit `.env` only when you need to override local settings. No API keys are requi
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
+npm run test --prefix web
+npm run lint --prefix web
+npm run build --prefix web
+npm audit --prefix web
 ```
 
 The default pytest run excludes browser tests and stays local and fast. Browser tests use Playwright. Installing its Chromium browser and headless shell downloads approximately 250-300 MB:
@@ -41,7 +45,7 @@ uv run pytest -m e2e
 
 The production direction is Next.js UI + FastAPI/PyMuPDF API + Supabase Auth, Postgres, and private Storage. Streamlit remains available as the local prototype. Frontend and API deployment options, Supabase setup, quotas, privacy limits, and unverified launch steps are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-To configure local Supabase-backed development, set values in `.env` and `web/.env.local` using their examples, apply the SQL migration, then run the API and frontend in separate terminals:
+To configure local Supabase-backed development, set values in `.env` and `web/.env.local` using their examples, apply the SQL migrations in order as documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), then run the API and frontend in separate terminals:
 
 ```powershell
 uv run uvicorn learnbook.api.main:app --reload --host 127.0.0.1 --port 8000

@@ -26,6 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ChangeEvent } from "react";
 import { apiRequest, type Book, type BookPage, type BookSummary } from "@/lib/api";
 import { getSupabaseClient } from "@/lib/supabase";
+import { LearningLoop } from "@/components/learning/LearningLoop";
 
 const maxUploadMb = 50;
 const emptyPages: BookPage[] = [];
@@ -499,6 +500,13 @@ export default function Home() {
                       </div>
                     )}
                   </section>
+                  <LearningLoop
+                    bookId={selectedBook.id}
+                    accessToken={accessToken}
+                    pages={pages}
+                    onSelectPage={setPageNumber}
+                    refreshKey={selectedBook.summary_json?.overview ?? ""}
+                  />
                 </>
               )}
 
