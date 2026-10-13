@@ -73,6 +73,45 @@ The local Streamlit prototype does not write uploads to local disk. The hosted a
 
 No Supabase project, credentials, actual Gemini key, or legal license decision is configured here. Real auth/storage/RLS and provider calls remain unverified. The terms page is explicitly a draft; configure the takedown contact and have counsel review it. No public deployment has been made.
 
+## Product Spec Gap Audit (2026-10-13)
+
+| Capability | Status | Implementation | Test coverage |
+| --- | --- | --- | --- |
+| Book map generation | Partial | `src/learnbook/api/summary.py`, `src/learnbook/api/schemas.py`, `web/src/app/page.tsx` | Mock schema/citation test ran; real Gemini output is unverified. Output is a flat overview/ideas/frameworks/practice list, not a ranked topic/subtopic map with study times. |
+| Whole-book coverage (chunking) | Partial | `src/learnbook/api/summary.py::_page_chunks`, `generate_book_summary` | Synthetic page-marker and long-page chunk tests ran. Full-book coverage/coherence on real provider output is unverified; cap is 400,000 extracted characters. |
+| Page-reference validation | Partial | `src/learnbook/api/summary.py::generate_book_summary`, `src/learnbook/api/schemas.py` | Valid page citation test ran. Out-of-range rejection branch and real model citations are unverified; validation checks range, not whether a cited page substantively supports a claim. |
+| Preferences screen | Missing | No preferences model or screen; `web/src/app/page.tsx` has no per-topic minutes, daily time, or goal controls. | No test. |
+| Learning-path builder | Missing | No path-selection or prerequisite-ordering code. | No test. |
+| Lesson reader | Missing | `web/src/app/page.tsx` reads extracted source pages, not generated lessons. | Page-reader tests ran; lesson behavior is unverified/missing. |
+| Recall questions | Partial | `src/learnbook/api/schemas.py::PracticeQuestion`, `src/learnbook/api/summary.py`, `web/src/app/page.tsx::GuidePanel` | Mock summary/schema test ran with no practice items. Recall scoring, answer checking, and mastery gating are missing and unverified. |
+| Saved passages | Missing | No passage table, API route, or UI. | No test. |
+| Notes | Missing | No notes model, persistence, route, or UI. | No test. |
+| Topic status (new/learning/understood/review) | Missing | No topic-status persistence or controls. | No test. |
+| Progress visual | Missing | `web/src/app/page.tsx` has a static product workflow strip only; no book-map status tree, heatmap, or mastered-core percentage. | No test. |
+| Delete data | Partial | `src/learnbook/api/main.py` individual/library delete routes; `web/src/app/page.tsx` delete controls; Supabase cascade in migration | Fake-Supabase delete test ran. Real Storage/Postgres deletion is unverified; usage-quota rows remain for the account, and account deletion is not implemented. |
+
+The 42 passing tests are offline/unit/API tests with a fake Supabase boundary. They do not establish live Supabase isolation, actual Gemini quality, or whole-book coverage on a book you know well.
+
+## Product Spec Audit (2026-10-13)
+
+| Capability | Status | Implementing file(s) | Test coverage / verification |
+| --- | --- | --- | --- |
+| Book map generation | Partial | `src/learnbook/api/summary.py`, `src/learnbook/api/schemas.py`, `web/src/app/page.tsx` | Mock schema/citation path in `tests/test_api.py` was run. Current output is a flat overview/ideas/frameworks/practice guide, not hierarchical topics/subtopics with ranking and study time. Real Gemini generation is unverified. |
+| Whole-book coverage (chunking) | Partial | `src/learnbook/api/summary.py::_page_chunks`, `generate_book_summary` | Synthetic marker/split tests in `tests/test_api.py` were run. Strategy chunks page text at 24k chars, summarizes each chunk, then merges chunk notes; coherent coverage of a real book is unverified. |
+| Page-reference validation | Partial | `src/learnbook/api/summary.py::generate_book_summary`, `src/learnbook/api/schemas.py` | Valid page citation test in `tests/test_api.py` was run. Range check rejects pages outside 1..page_count; invalid-citation rejection has no direct test, and semantic support for a citation is unverified. |
+| Preferences screen | Missing | No preferences screen/model exists in `web/src/app/page.tsx` or API routes. | No test. |
+| Learning-path builder | Missing | No path selection, prerequisite ordering, or optional-topic model exists. | No test. |
+| Lesson reader | Missing | `web/src/app/page.tsx` reads extracted source pages only; no generated lesson entity or route. | Source page browsing tests ran; lesson behavior is missing/unverified. |
+| Recall questions | Partial | `src/learnbook/api/schemas.py::PracticeQuestion`, `src/learnbook/api/summary.py`, `web/src/app/page.tsx::GuidePanel` | Mock guide schema test ran with empty practice items. Practice prompts can be generated, but there is no answer capture, grading, or mastery gate; real questions are unverified. |
+| Saved passages | Missing | No passage/highlight table, API route, or UI. | No test. |
+| Notes | Missing | No notes table, API route, or UI. | No test. |
+| Topic status (new/learning/understood/review) | Missing | No per-topic status model or route. | No test. |
+| Progress visual | Missing | `web/src/app/page.tsx` has a static product workflow strip, not a book-map tree/heatmap or mastery percentage. | No test. |
+| Delete data | Partial | Individual and library delete routes in `src/learnbook/api/main.py`; controls in `web/src/app/page.tsx`; cascades in the Supabase migration. | Fake-Supabase deletion tests in `tests/test_api.py` were run. Real object/DB deletion is unverified; quota audit rows remain until account deletion, and account deletion itself is not implemented. |
+
+### Audit Smoke-Test Readiness
+
+
 ## Next task
 
 Review public launch choices: AGPL-3.0 licensing, the copyright/takedown contact, real account-recovery and abuse-report processes, and transactional storage quotas before enabling public traffic.
