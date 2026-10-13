@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
+from learnbook.api.lessons import generate_topic_lesson
 from learnbook.api.processing import extract_pdf_with_timeout
 from learnbook.api.schemas import (
     GenerateSummaryRequest,
@@ -125,6 +126,24 @@ def create_app() -> FastAPI:
             params={
                 "id": f"eq.{topic_id}",
                 "book_id": f"eq.{book_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "*",
+                "limit": "1",
+            },
+        )
+        rows = response.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Topic not found.")
+        return rows[0]
+
+    async def find_topic_for_user(
+        backend: SupabaseRest, user_id: str, topic_id: uuid.UUID
+    ) -> dict[str, object]:
+        response = await backend.request(
+            "GET",
+            "/rest/v1/topics",
+            params={
+                "id": f"eq.{topic_id}",
                 "user_id": f"eq.{user_id}",
                 "select": "*",
                 "limit": "1",
@@ -534,6 +553,31 @@ def create_app() -> FastAPI:
         )
         return response.json()[0] if response.json() else payload
 
+    @app.get("/api/books/{book_id}/preferences")
+    async def get_preferences(
+        book_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        await find_book(backend, user_id, book_id)
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/learning_preferences",
+                params={
+                    "book_id": f"eq.{book_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(
+                status_code=404, detail="Learning preferences not found."
+            )
+        return rows[0]
+
     @app.post("/api/books/{book_id}/path")
     async def build_path(
         book_id: uuid.UUID,
@@ -682,6 +726,152 @@ def create_app() -> FastAPI:
             prefer="resolution=merge-duplicates,return=representation",
         )
         return result.json()[0] if result.json() else payload
+
+    @app.get("/api/topics/{topic_id}/lesson")
+    async def get_topic_lesson(
+        topic_id: uuid.UUID,
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+    ) -> dict[str, object]:
+        await find_topic_for_user(backend, user_id, topic_id)
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/lessons",
+                params={
+                    "topic_id": f"eq.{topic_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Lesson not found.")
+        return rows[0]
+
+    @app.post("/api/topics/{topic_id}/lesson")
+    async def create_topic_lesson(
+        request: GenerateSummaryRequest,
+        topic_id: uuid.UUID,
+        x_gemini_api_key: str = Header(default=""),
+        user_id: str = Depends(current_user_id),
+        backend: SupabaseRest = Depends(get_backend),
+        settings: Settings = Depends(get_settings),
+    ) -> dict[str, object]:
+        topic = await find_topic_for_user(backend, user_id, topic_id)
+        existing = (
+            await backend.request(
+                "GET",
+                "/rest/v1/lessons",
+                params={
+                    "topic_id": f"eq.{topic_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if existing:
+            return existing[0]
+        if not request.data_use_consent:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Confirm the provider data-use notice before generating a lesson."
+                ),
+            )
+        if len(x_gemini_api_key) < 20:
+            raise HTTPException(status_code=400, detail="Enter a valid Gemini API key.")
+        if not await backend.reserve_summary(user_id, settings):
+            raise HTTPException(
+                status_code=429,
+                detail="Your AI lesson limit has been reached. Try again later.",
+            )
+
+        book_rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/books",
+                params={
+                    "id": f"eq.{topic['book_id']}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "id,page_count",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not book_rows:
+            raise HTTPException(status_code=404, detail="Book not found.")
+        page_count = int(book_rows[0]["page_count"])
+        referenced_pages = sorted(set(int(page) for page in topic["page_refs"]))
+        selected_pages = sorted(
+            {
+                page
+                for reference in referenced_pages
+                for page in (reference - 1, reference, reference + 1)
+                if 1 <= page <= page_count
+            }
+        )
+        if not selected_pages:
+            raise HTTPException(
+                status_code=422, detail="This topic has no source pages."
+            )
+        page_rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/book_pages",
+                params={
+                    "book_id": f"eq.{topic['book_id']}",
+                    "user_id": f"eq.{user_id}",
+                    "page_number": f"in.({','.join(map(str, selected_pages))})",
+                    "select": "page_number,text",
+                    "order": "page_number.asc",
+                },
+            )
+        ).json()
+        if not page_rows:
+            raise HTTPException(status_code=422, detail="Source pages are unavailable.")
+        lesson = await generate_topic_lesson(
+            title=str(topic["title"]),
+            summary=str(topic["summary"]),
+            page_refs=referenced_pages,
+            pages=page_rows,
+            api_key=x_gemini_api_key,
+            settings=settings,
+        )
+        payload = {
+            "user_id": user_id,
+            "topic_id": str(topic_id),
+            "book_id": str(topic["book_id"]),
+            **lesson.model_dump(mode="json"),
+        }
+        response = await backend.request(
+            "POST",
+            "/rest/v1/lessons",
+            params={"on_conflict": "user_id,topic_id"},
+            json=payload,
+            prefer="resolution=ignore-duplicates,return=representation",
+        )
+        saved = response.json()
+        if saved:
+            return saved[0]
+        # A concurrent request may have inserted this topic's lesson first.
+        rows = (
+            await backend.request(
+                "GET",
+                "/rest/v1/lessons",
+                params={
+                    "topic_id": f"eq.{topic_id}",
+                    "user_id": f"eq.{user_id}",
+                    "select": "*",
+                    "limit": "1",
+                },
+            )
+        ).json()
+        if not rows:
+            raise HTTPException(status_code=502, detail="Could not save the lesson.")
+        return rows[0]
 
     @app.post("/api/books/{book_id}/highlights", status_code=201)
     async def create_highlight(

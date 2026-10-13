@@ -83,6 +83,24 @@ class NoteInput(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
 
 
+class RecallAnswer(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(min_length=1, max_length=1200)
+
+
+class TopicLesson(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+    recall_questions: list[RecallAnswer] = Field(min_length=2, max_length=2)
+    action: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def lesson_length(self) -> "TopicLesson":
+        words = len(self.body.split())
+        if not 600 <= words <= 900:
+            raise ValueError("Lesson body must contain 600 to 900 words.")
+        return self
+
+
 class GenerateSummaryRequest(BaseModel):
     data_use_consent: bool
 

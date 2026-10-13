@@ -112,6 +112,17 @@ No Supabase project, credentials, actual Gemini key, or legal license decision i
 
 Build the frontend preferences, path, lesson, note/highlight, and progress flows, then add UI-level coverage.
 
-## Next task
+## Task 7 backend checkpoint (2026-10-13)
 
-Review public launch choices: AGPL-3.0 licensing, the copyright/takedown contact, real account-recovery and abuse-report processes, and transactional storage quotas before enabling public traffic.
+**Status: Lessons API and storage are implemented locally; frontend work is in progress**
+
+- Added `supabase/migrations/202610150001_lessons.sql` with owner RLS, a unique user/topic cache, and cascading topic/book foreign keys.
+- Added validated lesson generation from cited pages plus a one-page neighbor margin. Source input is capped at 30,000 characters. Generation requires explicit consent, a per-request BYOK key, and an existing AI quota reservation.
+- Added authenticated GET and POST lesson routes. Cached lessons return before consent or quota checks and do not call Gemini again.
+- Tests cover 600-900 word length, exactly two recall answers, caching, topic ownership, quota rejection, selected pages, source cap, untrusted injected text, and migration RLS.
+- Validation checkpoint: `uv run pytest tests/test_lessons.py tests/test_api.py` passed 23 tests; Ruff lint and format checks passed; `uv sync --locked` resolved 66 packages and checked 63 installed packages.
+- Live Supabase migration/RLS and real Gemini lesson output remain unverified.
+
+## Remaining launch work
+
+Review AGPL-3.0 licensing, the copyright/takedown contact, account recovery and abuse reporting, transactional storage quotas, and public deployment requirements before enabling public traffic.
