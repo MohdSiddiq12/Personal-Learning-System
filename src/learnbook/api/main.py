@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -103,6 +104,14 @@ def get_backend(settings: Settings = Depends(get_settings)) -> SupabaseRest:
     return SupabaseRest(settings)
 
 
+def get_allowed_emails(settings: Settings = Depends(get_settings)) -> list[str] | None:
+    """Get allowed emails from env, return None if not set (no restriction)."""
+    raw = getattr(settings, "allowed_emails", None)
+    if raw:
+        return [e.strip().lower() for e in raw.split(",") if e.strip()]
+    return None
+
+
 def get_provider(settings: Settings = Depends(get_settings)) -> LLMProvider:
     global _PROCESS_PROVIDER, _PROCESS_PROVIDER_CONFIG
     key = settings.groq_api_key.get_secret_value() if settings.groq_api_key else None
@@ -121,13 +130,42 @@ def get_provider(settings: Settings = Depends(get_settings)) -> LLMProvider:
 async def current_user_id(
     authorization: str | None = Header(default=None),
     backend: SupabaseRest = Depends(get_backend),
+    allowed_emails: list[str] | None = Depends(get_allowed_emails),
 ) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Sign in to continue.")
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Sign in to continue.")
-    return await backend.verify_user(token)
+    user_id = await backend.verify_user(token)
+
+    # Check allowed emails if configured
+    if allowed_emails is not None:
+        # Get user email from Supabase
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                resp = await client.get(
+                    f"{backend.base_url}/auth/v1/user",
+                    headers={
+                        "apikey": backend.anon_key,
+                        "Authorization": f"Bearer {token}",
+                    },
+                )
+                if resp.status_code == 200:
+                    email = resp.json().get("email", "").lower()
+                    if email not in allowed_emails:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Access not allowed for this account.",
+                        )
+            except httpx.HTTPError:
+                # If we can't verify email, deny access when restriction is enabled
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access not allowed for this account.",
+                )
+
+    return user_id
 
 
 def create_app() -> FastAPI:

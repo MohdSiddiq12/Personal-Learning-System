@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     ai_daily_summary_limit: int = Field(default=3, gt=0)
     ai_monthly_summary_limit: int = Field(default=500, gt=0)
     ai_max_book_chars: int = Field(default=400_000, gt=0)
+    allowed_emails: str | None = None
 
     @model_validator(mode="after")
     def production_requires_groq_settings(self) -> "Settings":
